@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_VERSION="1.3.0"
+SCRIPT_VERSION="1.4.0"
 BACKUP_DIR="/root/tunnel-secure-backups"
 
 red() { printf '\033[31m%s\033[0m\n' "$*"; }
@@ -224,6 +224,7 @@ configure_ufw() {
   local gre_iface="$6"
   local enable_forwarding="$7"
   local wan_iface="$8"
+  local ssh_access_mode="$9"
 
   blue "\n[Firewall/UFW] Applying firewall rules while preserving tunnel access..."
   ensure_package ufw
@@ -236,7 +237,11 @@ configure_ufw() {
   ufw default deny incoming
   ufw default allow outgoing
 
-  ufw allow from "$mgmt_ip" to any port "$ssh_port" proto tcp comment 'admin ssh'
+  if [[ "$ssh_access_mode" == "open" ]]; then
+    ufw allow "$ssh_port"/tcp comment 'ssh open with fail2ban'
+  else
+    ufw allow from "$mgmt_ip" to any port "$ssh_port" proto tcp comment 'admin ssh restricted'
+  fi
 
   IFS=',' read -r -a extra_ports <<< "$extra_ports_csv"
   for p in "${extra_ports[@]}"; do
@@ -358,6 +363,14 @@ main() {
     *) yellow "Invalid option; defaulting to detected mode ($detected_tunnel_mode)."; tunnel_mode="$detected_tunnel_mode" ;;
   esac
 
+  ssh_access_mode="restricted"
+  ssh_access_mode_choice="$(ask 'SSH firewall mode? (1=restrict to management IP, 2=open SSH port and rely on Fail2ban)' '1')"
+  case "$ssh_access_mode_choice" in
+    1) ssh_access_mode="restricted" ;;
+    2) ssh_access_mode="open" ;;
+    *) yellow "Invalid option; defaulting to restricted SSH firewall mode." ;;
+  esac
+
   extra_ports_csv=""
   if [[ "$tunnel_mode" == "ssh" || "$tunnel_mode" == "both" ]]; then
     extra_ports_csv="$(ask 'SSH tunnel service port(s), comma-separated (example: 443/tcp,80/tcp)' '')"
@@ -413,7 +426,7 @@ main() {
   fi
 
   if ask_yes_no "Apply and enable UFW firewall now?" "y"; then
-    configure_ufw "$mgmt_ip" "$ssh_port" "$tunnel_mode" "$gre_peer_ip" "$extra_ports_csv" "$gre_iface" "$enable_forwarding" "$wan_iface"
+    configure_ufw "$mgmt_ip" "$ssh_port" "$tunnel_mode" "$gre_peer_ip" "$extra_ports_csv" "$gre_iface" "$enable_forwarding" "$wan_iface" "$ssh_access_mode"
   fi
 
   green "\nDone. Backups were saved in: $BACKUP_DIR"
