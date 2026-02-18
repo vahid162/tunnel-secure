@@ -11,6 +11,7 @@
 ## قابلیت‌ها
 
 - تنظیم امن SSH با Drop-in استاندارد (`/etc/ssh/sshd_config.d/00-tunnel-secure.conf`) و اعتبارسنجی قبل از ری‌استارت
+- در صورت خطای کانفیگ SSH، rollback خودکار فایل Drop-in
 - فعال‌سازی `fail2ban` برای جلوگیری از Brute-force
 - تنظیم `sysctl` سازگار با GRE (برای جلوگیری از اختلال rp_filter)
 - پشتیبانی از حالت اجرای همزمان دو تونل (`ssh-tunnel` + `gre-4`)
@@ -24,6 +25,7 @@
   - تنظیم `DEFAULT_FORWARD_POLICY` در UFW
   - اضافه کردن route rule برای عبور ترافیک بین اینترفیس GRE و اینترفیس WAN
 - بکاپ از تنظیمات SSH، fail2ban و UFW قبل از تغییر
+- اعتبارسنجی ورودی‌های حساس (IP مدیریت، IP سمت GRE، پورت SSH)
 
 ## اجرا
 

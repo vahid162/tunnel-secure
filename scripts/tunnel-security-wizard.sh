@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_VERSION="1.1.0"
+SCRIPT_VERSION="1.2.0"
 BACKUP_DIR="/root/tunnel-secure-backups"
 
 red() { printf '\033[31m%s\033[0m\n' "$*"; }
@@ -15,6 +15,25 @@ need_root() {
     echo "دستور پیشنهادی: sudo bash $0"
     exit 1
   fi
+}
+
+validate_ipv4_or_cidr() {
+  local ip="$1"
+  if [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}(/[0-9]{1,2})?$ ]]; then
+    return 0
+  fi
+  return 1
+}
+
+validate_port() {
+  local port="$1"
+  [[ "$port" =~ ^[0-9]+$ ]] || return 1
+  (( port >= 1 && port <= 65535 ))
+}
+
+validate_iface_exists() {
+  local iface="$1"
+  ip link show "$iface" >/dev/null 2>&1
 }
 
 ask() {
@@ -91,7 +110,12 @@ configure_sshd() {
     systemctl restart ssh || systemctl restart sshd
     green "تنظیمات SSH با موفقیت اعمال شد."
   else
-    red "پیکربندی SSH معتبر نیست. فایل را از بکاپ برگردانید: $BACKUP_DIR"
+    red "پیکربندی SSH معتبر نیست. تلاش برای Rollback..."
+    rm -f "$ssh_dropin"
+    latest_backup="$(ls -1t "$BACKUP_DIR"/00-tunnel-secure.conf.*.bak 2>/dev/null | head -n1 || true)"
+    if [[ -n "${latest_backup:-}" ]]; then
+      cp -a "$latest_backup" "$ssh_dropin"
+    fi
     exit 1
   fi
 }
@@ -208,10 +232,19 @@ main() {
   fi
 
   export DEBIAN_FRONTEND=noninteractive
-  apt-get update -y >/dev/null
+  apt-get update >/dev/null
 
-  mgmt_ip="$(ask 'IP ثابت خودتان برای مدیریت (مثال: 1.2.3.4)')"
+  mgmt_ip="$(ask 'IP ثابت خودتان برای مدیریت (مثال: 1.2.3.4 یا 1.2.3.4/32)')"
+  if ! validate_ipv4_or_cidr "$mgmt_ip"; then
+    red "IP مدیریت معتبر نیست."
+    exit 1
+  fi
+
   ssh_port="$(ask 'پورت SSH فعلی سرور' '22')"
+  if ! validate_port "$ssh_port"; then
+    red "پورت SSH معتبر نیست (باید عدد بین 1 تا 65535 باشد)."
+    exit 1
+  fi
 
   tunnel_mode_choice="$(ask 'نوع تونل شما چیست؟ (1=ssh-tunnel , 2=gre-4 , 3=هر دو)' '3')"
   tunnel_mode="both"
@@ -234,10 +267,21 @@ main() {
 
   if [[ "$tunnel_mode" == "gre" || "$tunnel_mode" == "both" ]]; then
     gre_peer_ip="$(ask 'IP سرور Peer در GRE (سمت مقابل تونل)')"
+    if ! validate_ipv4_or_cidr "$gre_peer_ip"; then
+      red "IP سمت مقابل GRE معتبر نیست."
+      exit 1
+    fi
+
     gre_iface="$(ask 'نام اینترفیس GRE (مثال: gre1)' 'gre1')"
+
     if ask_yes_no "آیا GRE شما برای عبور ترافیک/Forwarding استفاده می‌شود؟" "n"; then
       enable_forwarding="yes"
       wan_iface="$(ask 'نام اینترفیس اینترنت سرور (مثال: eth0)')"
+      if ! validate_iface_exists "$wan_iface"; then
+        red "اینترفیس WAN پیدا نشد: $wan_iface"
+        echo "برای دیدن اینترفیس‌ها: ip -br link"
+        exit 1
+      fi
     fi
   fi
 
