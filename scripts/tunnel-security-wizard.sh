@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_VERSION="1.2.1"
+SCRIPT_VERSION="1.3.0"
 BACKUP_DIR="/root/tunnel-secure-backups"
 
 red() { printf '\033[31m%s\033[0m\n' "$*"; }
@@ -17,12 +17,30 @@ need_root() {
   fi
 }
 
-validate_ipv4_or_cidr() {
+is_valid_ipv4() {
   local ip="$1"
-  if [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}(/[0-9]{1,2})?$ ]]; then
-    return 0
+  local IFS='.'
+  local -a octets
+  read -r -a octets <<< "$ip"
+  [[ ${#octets[@]} -eq 4 ]] || return 1
+  for o in "${octets[@]}"; do
+    [[ "$o" =~ ^[0-9]+$ ]] || return 1
+    (( o >= 0 && o <= 255 )) || return 1
+  done
+}
+
+validate_ipv4_or_cidr() {
+  local input="$1"
+  local ip="${input%%/*}"
+  local cidr=""
+
+  if [[ "$input" == */* ]]; then
+    cidr="${input##*/}"
+    [[ "$cidr" =~ ^[0-9]+$ ]] || return 1
+    (( cidr >= 0 && cidr <= 32 )) || return 1
   fi
-  return 1
+
+  is_valid_ipv4 "$ip"
 }
 
 validate_port() {
@@ -76,6 +94,60 @@ ensure_package() {
   local pkg="$1"
   if ! dpkg -s "$pkg" >/dev/null 2>&1; then
     apt-get install -y "$pkg"
+  fi
+}
+
+auto_detect_ssh_port() {
+  sshd -T 2>/dev/null | awk '/^port /{print $2; exit}' || true
+}
+
+auto_detect_mgmt_ip() {
+  ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") {print $(i+1); exit}}' || true
+}
+
+auto_detect_wan_iface() {
+  ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev") {print $(i+1); exit}}' || true
+}
+
+auto_detect_gre_iface() {
+  ip -br a 2>/dev/null | awk '{print $1}' | grep -Ei '^(gre[0-9]*|GRE(@NONE)?)$' | head -n1 || true
+}
+
+auto_detect_gre_peer() {
+  local iface="$1"
+  [[ -n "$iface" ]] || return 0
+  ip tunnel show "$iface" 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="remote") {print $(i+1); exit}}' || true
+}
+
+has_gre_tunnel() {
+  ip -d link show 2>/dev/null | grep -Eiq '\bgre\b|\bgretap\b|\berspan\b' && return 0
+  ip -br a 2>/dev/null | awk '{print $1}' | grep -Eiq '^(gre[0-9]*|GRE(@NONE)?)$'
+}
+
+has_ssh_tunnel_signals() {
+  ip -br a 2>/dev/null | awk '{print $1}' | grep -Eiq '^(tun|tap)[0-9]+'
+}
+
+auto_detect_tunnel_mode() {
+  local has_gre="no"
+  local has_ssh="no"
+
+  if has_gre_tunnel; then
+    has_gre="yes"
+  fi
+
+  if has_ssh_tunnel_signals; then
+    has_ssh="yes"
+  fi
+
+  if [[ "$has_gre" == "yes" && "$has_ssh" == "yes" ]]; then
+    echo "both"
+  elif [[ "$has_gre" == "yes" ]]; then
+    echo "gre"
+  elif [[ "$has_ssh" == "yes" ]]; then
+    echo "ssh"
+  else
+    echo "ssh"
   fi
 }
 
@@ -223,7 +295,7 @@ main() {
   blue "============================================"
   blue " Tunnel Security Wizard v${SCRIPT_VERSION}"
   blue "============================================"
-  yellow "This wizard is intended for servers using ssh-tunnel or gre-4."
+  yellow "This wizard can auto-detect SSH/GRE tunnel signals and suggest safe defaults."
   yellow "Before applying final changes, make sure you have emergency console access."
 
   if ! ask_yes_no "Do you want to continue?" "y"; then
@@ -234,30 +306,56 @@ main() {
   export DEBIAN_FRONTEND=noninteractive
   apt-get update >/dev/null
 
-  mgmt_ip="$(ask 'Management IP (example: 1.2.3.4 or 1.2.3.4/32)')"
+  detected_mgmt_ip="$(auto_detect_mgmt_ip)"
+  detected_ssh_port="$(auto_detect_ssh_port)"
+  detected_tunnel_mode="$(auto_detect_tunnel_mode)"
+  detected_gre_iface="$(auto_detect_gre_iface)"
+  detected_gre_peer="$(auto_detect_gre_peer "$detected_gre_iface")"
+  detected_wan_iface="$(auto_detect_wan_iface)"
+
+  [[ -z "$detected_mgmt_ip" ]] && detected_mgmt_ip="1.2.3.4"
+  [[ -z "$detected_ssh_port" ]] && detected_ssh_port="22"
+  [[ -z "$detected_gre_iface" ]] && detected_gre_iface="gre1"
+
+  yellow "Auto-detected defaults:"
+  echo "  Management IP: $detected_mgmt_ip"
+  echo "  SSH Port: $detected_ssh_port"
+  echo "  Tunnel Mode: $detected_tunnel_mode"
+  echo "  GRE Interface: $detected_gre_iface"
+  echo "  GRE Peer IP: ${detected_gre_peer:-not-detected}"
+  echo "  WAN Interface: ${detected_wan_iface:-not-detected}"
+
+  mgmt_ip="$(ask 'Management IP (example: 1.2.3.4 or 1.2.3.4/32)' "$detected_mgmt_ip")"
   if ! validate_ipv4_or_cidr "$mgmt_ip"; then
     red "Invalid management IP format."
     exit 1
   fi
 
-  ssh_port="$(ask 'Current SSH port' '22')"
+  ssh_port="$(ask 'Current SSH port' "$detected_ssh_port")"
   if ! validate_port "$ssh_port"; then
     red "Invalid SSH port. Must be a number between 1 and 65535."
     exit 1
   fi
 
-  tunnel_mode_choice="$(ask 'Tunnel mode? (1=ssh-tunnel , 2=gre-4 , 3=both)' '3')"
+  case "$detected_tunnel_mode" in
+    ssh) mode_default="1" ;;
+    gre) mode_default="2" ;;
+    both) mode_default="3" ;;
+    *) mode_default="3" ;;
+  esac
+
+  tunnel_mode_choice="$(ask 'Tunnel mode? (1=ssh-tunnel , 2=gre-4 , 3=both)' "$mode_default")"
   tunnel_mode="both"
   gre_peer_ip=""
-  gre_iface="gre1"
+  gre_iface="$detected_gre_iface"
   enable_forwarding="no"
-  wan_iface=""
+  wan_iface="$detected_wan_iface"
 
   case "$tunnel_mode_choice" in
     1) tunnel_mode="ssh" ;;
     2) tunnel_mode="gre" ;;
     3) tunnel_mode="both" ;;
-    *) yellow "Invalid option; defaulting to both." ;;
+    *) yellow "Invalid option; defaulting to detected mode ($detected_tunnel_mode)."; tunnel_mode="$detected_tunnel_mode" ;;
   esac
 
   extra_ports_csv=""
@@ -266,17 +364,22 @@ main() {
   fi
 
   if [[ "$tunnel_mode" == "gre" || "$tunnel_mode" == "both" ]]; then
-    gre_peer_ip="$(ask 'GRE peer IP (remote tunnel endpoint)')"
+    gre_peer_ip="$(ask 'GRE peer IP (remote tunnel endpoint)' "${detected_gre_peer:-}")"
     if ! validate_ipv4_or_cidr "$gre_peer_ip"; then
       red "Invalid GRE peer IP format."
       exit 1
     fi
 
-    gre_iface="$(ask 'GRE interface name (example: gre1)' 'gre1')"
+    gre_iface="$(ask 'GRE interface name (example: gre1)' "$gre_iface")"
+    if ! validate_iface_exists "$gre_iface"; then
+      red "GRE interface not found: $gre_iface"
+      echo "Use this command to list interfaces: ip -br link"
+      exit 1
+    fi
 
     if ask_yes_no "Is GRE used for traffic forwarding/routing?" "n"; then
       enable_forwarding="yes"
-      wan_iface="$(ask 'WAN interface name (example: eth0)')"
+      wan_iface="$(ask 'WAN interface name (example: eth0)' "$wan_iface")"
       if ! validate_iface_exists "$wan_iface"; then
         red "WAN interface not found: $wan_iface"
         echo "Use this command to list interfaces: ip -br link"
