@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_VERSION="1.2.0"
+SCRIPT_VERSION="1.2.1"
 BACKUP_DIR="/root/tunnel-secure-backups"
 
 red() { printf '\033[31m%s\033[0m\n' "$*"; }
@@ -11,8 +11,8 @@ blue() { printf '\033[34m%s\033[0m\n' "$*"; }
 
 need_root() {
   if [[ $EUID -ne 0 ]]; then
-    red "این اسکریپت باید با دسترسی root اجرا شود."
-    echo "دستور پیشنهادی: sudo bash $0"
+    red "This script must be run as root."
+    echo "Suggested command: sudo bash $0"
     exit 1
   fi
 }
@@ -59,7 +59,7 @@ ask_yes_no() {
     case "$answer" in
       y|Y) return 0 ;;
       n|N) return 1 ;;
-      *) yellow "لطفاً فقط y یا n وارد کنید." ;;
+      *) yellow "Please enter only y or n." ;;
     esac
   done
 }
@@ -85,7 +85,7 @@ configure_sshd() {
   local allow_users="$3"
   local ssh_dropin="/etc/ssh/sshd_config.d/00-tunnel-secure.conf"
 
-  blue "\n[SSH] در حال تنظیمات امن SSH..."
+  blue "\n[SSH] Applying secure SSH settings..."
   mkdir -p /etc/ssh/sshd_config.d
   backup_file "$ssh_dropin"
 
@@ -108,9 +108,9 @@ configure_sshd() {
 
   if sshd -t; then
     systemctl restart ssh || systemctl restart sshd
-    green "تنظیمات SSH با موفقیت اعمال شد."
+    green "SSH settings applied successfully."
   else
-    red "پیکربندی SSH معتبر نیست. تلاش برای Rollback..."
+    red "Invalid SSH config detected. Attempting rollback..."
     rm -f "$ssh_dropin"
     latest_backup="$(ls -1t "$BACKUP_DIR"/00-tunnel-secure.conf.*.bak 2>/dev/null | head -n1 || true)"
     if [[ -n "${latest_backup:-}" ]]; then
@@ -122,7 +122,7 @@ configure_sshd() {
 
 configure_fail2ban() {
   local ssh_port="$1"
-  blue "\n[Fail2ban] فعال‌سازی محافظت در برابر Brute-force..."
+  blue "\n[Fail2ban] Enabling brute-force protection..."
   ensure_package fail2ban
   backup_file /etc/fail2ban/jail.local
 
@@ -140,7 +140,7 @@ backend = %(sshd_backend)s
 EOC
 
   systemctl enable --now fail2ban
-  green "Fail2ban فعال شد."
+  green "Fail2ban enabled successfully."
 }
 
 configure_ufw() {
@@ -153,7 +153,7 @@ configure_ufw() {
   local enable_forwarding="$7"
   local wan_iface="$8"
 
-  blue "\n[Firewall/UFW] تنظیم فایروال با حفظ تونل..."
+  blue "\n[Firewall/UFW] Applying firewall rules while preserving tunnel access..."
   ensure_package ufw
   backup_file /etc/default/ufw
   mkdir -p "$BACKUP_DIR"
@@ -188,13 +188,13 @@ configure_ufw() {
 
   ufw --force enable
   ufw status verbose
-  green "UFW فعال شد."
+  green "UFW enabled successfully."
 }
 
 configure_sysctl_for_gre() {
   local gre_iface="$1"
   local enable_forwarding="$2"
-  blue "\n[Sysctl] تنظیمات سازگار با GRE..."
+  blue "\n[Sysctl] Applying GRE-compatible kernel settings..."
   backup_file /etc/sysctl.d/99-tunnel-secure.conf
 
   cat > /etc/sysctl.d/99-tunnel-secure.conf <<EOC
@@ -214,7 +214,7 @@ EOC
   fi
 
   sysctl --system >/dev/null
-  green "تنظیمات sysctl اعمال شد."
+  green "Sysctl settings applied successfully."
 }
 
 main() {
@@ -223,30 +223,30 @@ main() {
   blue "============================================"
   blue " Tunnel Security Wizard v${SCRIPT_VERSION}"
   blue "============================================"
-  yellow "این ابزار برای سرورهایی است که از ssh-tunnel یا gre-4 استفاده می‌کنند."
-  yellow "قبل از اعمال نهایی، بهتر است یک دسترسی کنسول/پنل اضطراری داشته باشید."
+  yellow "This wizard is intended for servers using ssh-tunnel or gre-4."
+  yellow "Before applying final changes, make sure you have emergency console access."
 
-  if ! ask_yes_no "ادامه می‌دهید؟" "y"; then
-    echo "خروج..."
+  if ! ask_yes_no "Do you want to continue?" "y"; then
+    echo "Exit."
     exit 0
   fi
 
   export DEBIAN_FRONTEND=noninteractive
   apt-get update >/dev/null
 
-  mgmt_ip="$(ask 'IP ثابت خودتان برای مدیریت (مثال: 1.2.3.4 یا 1.2.3.4/32)')"
+  mgmt_ip="$(ask 'Management IP (example: 1.2.3.4 or 1.2.3.4/32)')"
   if ! validate_ipv4_or_cidr "$mgmt_ip"; then
-    red "IP مدیریت معتبر نیست."
+    red "Invalid management IP format."
     exit 1
   fi
 
-  ssh_port="$(ask 'پورت SSH فعلی سرور' '22')"
+  ssh_port="$(ask 'Current SSH port' '22')"
   if ! validate_port "$ssh_port"; then
-    red "پورت SSH معتبر نیست (باید عدد بین 1 تا 65535 باشد)."
+    red "Invalid SSH port. Must be a number between 1 and 65535."
     exit 1
   fi
 
-  tunnel_mode_choice="$(ask 'نوع تونل شما چیست؟ (1=ssh-tunnel , 2=gre-4 , 3=هر دو)' '3')"
+  tunnel_mode_choice="$(ask 'Tunnel mode? (1=ssh-tunnel , 2=gre-4 , 3=both)' '3')"
   tunnel_mode="both"
   gre_peer_ip=""
   gre_iface="gre1"
@@ -257,64 +257,64 @@ main() {
     1) tunnel_mode="ssh" ;;
     2) tunnel_mode="gre" ;;
     3) tunnel_mode="both" ;;
-    *) yellow "گزینه نامعتبر؛ حالت پیش‌فرض: هر دو" ;;
+    *) yellow "Invalid option; defaulting to both." ;;
   esac
 
   extra_ports_csv=""
   if [[ "$tunnel_mode" == "ssh" || "$tunnel_mode" == "both" ]]; then
-    extra_ports_csv="$(ask 'پورت(های) سرویس تونل SSH را با کاما وارد کنید (مثال: 443/tcp,80/tcp)' '')"
+    extra_ports_csv="$(ask 'SSH tunnel service port(s), comma-separated (example: 443/tcp,80/tcp)' '')"
   fi
 
   if [[ "$tunnel_mode" == "gre" || "$tunnel_mode" == "both" ]]; then
-    gre_peer_ip="$(ask 'IP سرور Peer در GRE (سمت مقابل تونل)')"
+    gre_peer_ip="$(ask 'GRE peer IP (remote tunnel endpoint)')"
     if ! validate_ipv4_or_cidr "$gre_peer_ip"; then
-      red "IP سمت مقابل GRE معتبر نیست."
+      red "Invalid GRE peer IP format."
       exit 1
     fi
 
-    gre_iface="$(ask 'نام اینترفیس GRE (مثال: gre1)' 'gre1')"
+    gre_iface="$(ask 'GRE interface name (example: gre1)' 'gre1')"
 
-    if ask_yes_no "آیا GRE شما برای عبور ترافیک/Forwarding استفاده می‌شود؟" "n"; then
+    if ask_yes_no "Is GRE used for traffic forwarding/routing?" "n"; then
       enable_forwarding="yes"
-      wan_iface="$(ask 'نام اینترفیس اینترنت سرور (مثال: eth0)')"
+      wan_iface="$(ask 'WAN interface name (example: eth0)')"
       if ! validate_iface_exists "$wan_iface"; then
-        red "اینترفیس WAN پیدا نشد: $wan_iface"
-        echo "برای دیدن اینترفیس‌ها: ip -br link"
+        red "WAN interface not found: $wan_iface"
+        echo "Use this command to list interfaces: ip -br link"
         exit 1
       fi
     fi
   fi
 
   disable_password="no"
-  if ask_yes_no "می‌خواهید لاگین پسوردی SSH غیرفعال شود؟ (فقط اگر کلید SSH دارید y بزنید)" "n"; then
+  if ask_yes_no "Disable SSH password login? (answer y only if SSH key auth is ready)" "n"; then
     disable_password="yes"
   fi
 
   allow_users=""
-  if ask_yes_no "می‌خواهید فقط یک/چند کاربر خاص اجازه SSH داشته باشند؟" "n"; then
-    allow_users="$(ask 'نام کاربر(ها) با فاصله (مثال: admin deploy)')"
+  if ask_yes_no "Limit SSH access to specific user(s)?" "n"; then
+    allow_users="$(ask 'Username(s) separated by spaces (example: admin deploy)')"
   fi
 
-  if ask_yes_no "آیا تنظیمات SSH اعمال شود؟" "y"; then
+  if ask_yes_no "Apply SSH hardening settings now?" "y"; then
     configure_sshd "$ssh_port" "$disable_password" "$allow_users"
   fi
 
-  if ask_yes_no "آیا Fail2ban نصب و فعال شود؟" "y"; then
+  if ask_yes_no "Install and enable Fail2ban now?" "y"; then
     configure_fail2ban "$ssh_port"
   fi
 
   if [[ "$tunnel_mode" == "gre" || "$tunnel_mode" == "both" ]]; then
-    if ask_yes_no "آیا sysctl سازگار با GRE اعمال شود؟" "y"; then
+    if ask_yes_no "Apply GRE-compatible sysctl settings now?" "y"; then
       configure_sysctl_for_gre "$gre_iface" "$enable_forwarding"
     fi
   fi
 
-  if ask_yes_no "آیا فایروال UFW تنظیم و فعال شود؟" "y"; then
+  if ask_yes_no "Apply and enable UFW firewall now?" "y"; then
     configure_ufw "$mgmt_ip" "$ssh_port" "$tunnel_mode" "$gre_peer_ip" "$extra_ports_csv" "$gre_iface" "$enable_forwarding" "$wan_iface"
   fi
 
-  green "\n✅ تمام شد. بکاپ‌ها در مسیر $BACKUP_DIR ذخیره شده‌اند."
-  yellow "پیشنهاد: یک سشن SSH جدید باز کنید و اتصال را تست کنید، سپس سشن فعلی را ببندید."
+  green "\nDone. Backups were saved in: $BACKUP_DIR"
+  yellow "Recommendation: open a new SSH session and verify connectivity before closing this one."
 }
 
 main "$@"
