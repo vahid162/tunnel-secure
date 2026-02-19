@@ -38,15 +38,19 @@
 sudo bash scripts/tunnel-security-wizard.sh
 ```
 
-## اجرای هوشمند (دانلود + ورود به پوشه + اجرا)
+## اجرای سریع (فقط با کپی/پیست)
 
-اگر می‌خواهید با یک دستور همه‌چیز انجام شود (clone/update ریپو، ورود به پوشه، اجرای ویزارد):
+مثل ریپوهای `gre-4` و `ssh-tunnel` می‌توانید بدون clone کردن دستی، مستقیم با یک دستور اجرا کنید:
 
 ```bash
-bash -c 'set -e; REPO_DIR=/opt/tunnel-secure; REPO_URL=https://github.com/vahid162/tunnel-secure.git; if [ ! -d "$REPO_DIR/.git" ]; then sudo git clone "$REPO_URL" "$REPO_DIR"; else sudo git -C "$REPO_DIR" pull --ff-only; fi; cd "$REPO_DIR"; sudo bash scripts/tunnel-security-wizard.sh'
+bash <(curl -fsSL https://raw.githubusercontent.com/vahid162/tunnel-secure/main/scripts/tunnel-security-wizard.sh)
 ```
 
-> اگر آدرس ریپو شما متفاوت است، مقدار `REPO_URL` را تغییر دهید.
+اگر `curl` نصب نبود، از `wget` استفاده کنید:
+
+```bash
+bash <(wget -qO- https://raw.githubusercontent.com/vahid162/tunnel-secure/main/scripts/tunnel-security-wizard.sh)
+```
 
 ## رفع خطای رایج
 
