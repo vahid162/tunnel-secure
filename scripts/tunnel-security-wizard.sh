@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_VERSION="1.4.0"
+SCRIPT_VERSION="1.4.4"
 BACKUP_DIR="/root/tunnel-secure-backups"
 
 red() { printf '\033[31m%s\033[0m\n' "$*"; }
@@ -94,6 +94,29 @@ ensure_package() {
   local pkg="$1"
   if ! dpkg -s "$pkg" >/dev/null 2>&1; then
     apt-get install -y "$pkg"
+  fi
+}
+
+auto_detect_admin_ip() {
+  if [[ -n "${SSH_CLIENT:-}" ]]; then
+    awk '{print $1}' <<< "$SSH_CLIENT"
+    return 0
+  fi
+
+  if [[ -n "${SSH_CONNECTION:-}" ]]; then
+    awk '{print $1}' <<< "$SSH_CONNECTION"
+    return 0
+  fi
+
+  who am i 2>/dev/null | awk '{print $NF}' | tr -d '()' | awk 'NF{print; exit}' || true
+}
+
+auto_detect_ssh_access_mode() {
+  local admin_ip="$1"
+  if validate_ipv4_or_cidr "$admin_ip"; then
+    echo "restricted"
+  else
+    echo "open"
   fi
 }
 
@@ -311,12 +334,15 @@ main() {
   export DEBIAN_FRONTEND=noninteractive
   apt-get update >/dev/null
 
-  detected_mgmt_ip="$(auto_detect_mgmt_ip)"
+  detected_admin_ip="$(auto_detect_admin_ip)"
+  detected_mgmt_ip="$detected_admin_ip"
+  [[ -z "$detected_mgmt_ip" ]] && detected_mgmt_ip="$(auto_detect_mgmt_ip)"
   detected_ssh_port="$(auto_detect_ssh_port)"
   detected_tunnel_mode="$(auto_detect_tunnel_mode)"
   detected_gre_iface="$(auto_detect_gre_iface)"
   detected_gre_peer="$(auto_detect_gre_peer "$detected_gre_iface")"
   detected_wan_iface="$(auto_detect_wan_iface)"
+  detected_ssh_access_mode="$(auto_detect_ssh_access_mode "$detected_mgmt_ip")"
 
   [[ -z "$detected_mgmt_ip" ]] && detected_mgmt_ip="1.2.3.4"
   [[ -z "$detected_ssh_port" ]] && detected_ssh_port="22"
@@ -329,6 +355,7 @@ main() {
   echo "  GRE Interface: $detected_gre_iface"
   echo "  GRE Peer IP: ${detected_gre_peer:-not-detected}"
   echo "  WAN Interface: ${detected_wan_iface:-not-detected}"
+  echo "  SSH Firewall Mode: $detected_ssh_access_mode"
 
   mgmt_ip="$(ask 'Management IP (example: 1.2.3.4 or 1.2.3.4/32)' "$detected_mgmt_ip")"
   if ! validate_ipv4_or_cidr "$mgmt_ip"; then
@@ -363,12 +390,21 @@ main() {
     *) yellow "Invalid option; defaulting to detected mode ($detected_tunnel_mode)."; tunnel_mode="$detected_tunnel_mode" ;;
   esac
 
+  ssh_access_mode_default="1"
+  if [[ "$detected_ssh_access_mode" == "open" ]]; then
+    ssh_access_mode_default="2"
+    yellow "Admin IP could not be auto-detected from SSH session; defaulting SSH firewall mode to open + Fail2ban to reduce lockout risk."
+  fi
+
   ssh_access_mode="restricted"
-  ssh_access_mode_choice="$(ask 'SSH firewall mode? (1=restrict to management IP, 2=open SSH port and rely on Fail2ban)' '1')"
+  ssh_access_mode_choice="$(ask 'SSH firewall mode? (1=restrict to management IP, 2=open SSH port and rely on Fail2ban)' "$ssh_access_mode_default")"
   case "$ssh_access_mode_choice" in
     1) ssh_access_mode="restricted" ;;
     2) ssh_access_mode="open" ;;
-    *) yellow "Invalid option; defaulting to restricted SSH firewall mode." ;;
+    *)
+      yellow "Invalid option; defaulting to detected SSH firewall mode ($detected_ssh_access_mode)."
+      ssh_access_mode="$detected_ssh_access_mode"
+      ;;
   esac
 
   extra_ports_csv=""
