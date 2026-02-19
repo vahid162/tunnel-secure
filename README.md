@@ -38,6 +38,16 @@
 sudo bash scripts/tunnel-security-wizard.sh
 ```
 
+## اجرای هوشمند (دانلود + ورود به پوشه + اجرا)
+
+اگر می‌خواهید با یک دستور همه‌چیز انجام شود (clone/update ریپو، ورود به پوشه، اجرای ویزارد):
+
+```bash
+bash -c 'set -e; REPO_DIR=/opt/tunnel-secure; REPO_URL=https://github.com/vahid162/tunnel-secure.git; if [ ! -d "$REPO_DIR/.git" ]; then sudo git clone "$REPO_URL" "$REPO_DIR"; else sudo git -C "$REPO_DIR" pull --ff-only; fi; cd "$REPO_DIR"; sudo bash scripts/tunnel-security-wizard.sh'
+```
+
+> اگر آدرس ریپو شما متفاوت است، مقدار `REPO_URL` را تغییر دهید.
+
 ## رفع خطای رایج
 
 اگر خطای زیر را دیدید:
