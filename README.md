@@ -86,6 +86,40 @@ sudo bash scripts/tunnel-security-wizard.sh
 
 اگر پروژه را جای دیگری clone کرده‌اید، به‌جای `/workspace/tunnel-secure` مسیر واقعی همان پوشه را بگذارید.
 
+## سناریوی پیشنهادی: الان SSH داری و بعداً می‌خواهی GRE اضافه کنی
+
+اگر الان سرورت روی `ssh-tunnel` پایدار است و بعداً می‌خواهی `gre-4` را هم اضافه کنی، مسیر امن پیشنهادی این است:
+
+1. **اول وضعیت فعلی را فریز و بررسی کن**
+   - با اسکریپت audit وضعیت SSH/UFW/Fail2ban را ثبت کن.
+   - حتماً کنسول اضطراری (VNC/KVM) در دسترس باشد.
+2. **GRE را جداگانه نصب/بالا بیاور (بدون دست‌زدن به فایروال)**
+   - طبق ریپوی `gre-4` فقط اینترفیس GRE را بالا بیاور و `ping` دو سر GRE را تست کن.
+3. **بعد Wizard را دوباره در حالت `both` اجرا کن**
+   - `Tunnel mode = 3 (both)`
+   - `GRE peer IP` را دقیق وارد کن.
+   - اگر GRE برای روتینگ است، گزینه forwarding را هم `y` بزن.
+4. **در مرحله UFW، پورت‌های SSH tunnel را هم نگه‌دار**
+   - اگر هنوز سرویس SSH tunnel لازم است، پورت‌هایش را در `SSH tunnel service port(s)` وارد کن.
+   - اگر لازم نیست، خالی بگذار.
+5. **تست بعد از اعمال**
+   - قبل از بستن سشن فعلی، یک SSH سشن جدید باز کن.
+   - `ufw status verbose`، `ip a`، `ip route` و `ping` روی IP تونل GRE را بررسی کن.
+
+### دستورهای پیشنهادی سریع برای این سناریو
+
+```bash
+# 1) قبل از تغییر: گزارش بدون تغییر
+sudo bash <(curl -fsSL https://raw.githubusercontent.com/vahid162/tunnel-secure/main/scripts/tunnel-security-audit.sh)
+
+# 2) بعد از بالا آوردن GRE: اجرای Wizard در حالت both
+bash <(curl -fsSL https://raw.githubusercontent.com/vahid162/tunnel-secure/main/scripts/tunnel-security-wizard.sh)
+# داخل Wizard: Tunnel mode = 3 (both)
+
+# 3) بعد از اعمال: دوباره audit بگیر
+sudo bash <(curl -fsSL https://raw.githubusercontent.com/vahid162/tunnel-secure/main/scripts/tunnel-security-audit.sh)
+```
+
 ## نکته مهم
 
 قبل از فعال‌سازی فایروال، حتماً یک دسترسی اضطراری (کنسول پنل/VNC/KVM) داشته باشید.
