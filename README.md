@@ -19,6 +19,8 @@
 - انتخاب حالت دسترسی SSH در UFW:
   - حالت محدود (فقط IP مدیریتی)
   - حالت باز (پورت SSH باز + اتکا به Fail2ban)
+  - پیش‌فرض‌گذاری خودکار این گزینه بر اساس تشخیص IP ادمین از نشست SSH فعلی (برای کاهش ریسک lockout)
+  - پشتیبانی از چند IP مدیریتی (ورودی comma-separated) برای جلوگیری از قفل شدن SSH در تغییر IP/مسیر دسترسی
 - تنظیم `ufw` با درنظر گرفتن:
   - IP مدیریتی شما
   - پورت SSH
@@ -38,9 +40,42 @@
 sudo bash scripts/tunnel-security-wizard.sh
 ```
 
+## اجرای سریع (فقط با کپی/پیست)
+
+مثل ریپوهای `gre-4` و `ssh-tunnel` می‌توانید بدون clone کردن دستی، مستقیم با یک دستور اجرا کنید:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/vahid162/tunnel-secure/main/scripts/tunnel-security-wizard.sh)
+```
+
+اگر `curl` نصب نبود، از `wget` استفاده کنید:
+
+```bash
+bash <(wget -qO- https://raw.githubusercontent.com/vahid162/tunnel-secure/main/scripts/tunnel-security-wizard.sh)
+```
+
+## رفع خطای رایج
+
+اگر خطای زیر را دیدید:
+
+```bash
+bash: scripts/tunnel-security-wizard.sh: No such file or directory
+```
+
+یعنی در مسیر اشتباه هستید و از داخل پوشه‌ی ریپو دستور را اجرا نکرده‌اید. اول به مسیر پروژه بروید و بعد اجرا کنید:
+
+```bash
+cd /workspace/tunnel-secure
+sudo bash scripts/tunnel-security-wizard.sh
+```
+
+اگر پروژه را جای دیگری clone کرده‌اید، به‌جای `/workspace/tunnel-secure` مسیر واقعی همان پوشه را بگذارید.
+
 ## نکته مهم
 
 قبل از فعال‌سازی فایروال، حتماً یک دسترسی اضطراری (کنسول پنل/VNC/KVM) داشته باشید.
+
+در حالت `SSH firewall mode = restricted`، فقط IPهای مدیریتی که وارد کرده‌اید اجازه SSH خواهند داشت. اگر IP فعلی/پشتیبان شما در لیست نباشد، ممکن است دسترسی SSH قطع شود (lockout).
 
 ## بکاپ‌ها
 
