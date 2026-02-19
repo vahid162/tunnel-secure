@@ -146,6 +146,26 @@ sudo bash <(curl -fsSL https://raw.githubusercontent.com/vahid162/tunnel-secure/
 - قبل/بعد از هر تغییر، یک audit بگیر تا تفاوت‌ها را سریع ببینی.
 - تا وقتی اتصال جدید را تست نکرده‌ای، سشن فعلی SSH را نبند.
 
+## ماتریس سناریوها (برای جلوگیری از تداخل)
+
+- **فقط SSH tunnel داری (بدون GRE):**
+  - `Tunnel mode = 1 (ssh)`
+  - پورت(های) سرویس SSH tunnel را در `SSH tunnel service port(s)` وارد کن.
+- **فقط GRE داری (بدون SSH tunnel):**
+  - `Tunnel mode = 2 (gre)`
+  - `GRE peer IP` را دقیق وارد کن.
+- **SSH + GRE هر دو فعال هستند:**
+  - `Tunnel mode = 3 (both)`
+  - هم `GRE peer IP` را وارد کن، هم پورت‌های SSH tunnel را.
+- **در حال مهاجرت (یکی اضافه/حذف می‌شود):**
+  - قبل/بعد تغییر audit بگیر و Wizard را دوباره اجرا کن.
+
+### نکته مهم درباره `SSH firewall mode`
+
+- اگر `SSH firewall mode = 1 (restricted)` باشد: فقط IPهای allowlist اجازه SSH دارند.
+- اگر `SSH firewall mode = 2 (open + Fail2ban)` باشد: پورت SSH برای همه باز است و allowlist برای خودِ SSH اعمال نمی‌شود.
+- در سناریوی ایران/خارج، IP سمت مقابل SSH tunnel به‌صورت auto-detect پیشنهاد می‌شود و می‌تواند برای allowlist/Fail2ban ignore استفاده شود.
+
 ## نکته مهم
 
 قبل از فعال‌سازی فایروال، حتماً یک دسترسی اضطراری (کنسول پنل/VNC/KVM) داشته باشید.
