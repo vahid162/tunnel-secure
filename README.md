@@ -27,6 +27,7 @@
   - پیش‌فرض این گزینه روی حالت باز + Fail2ban (گزینه ۲) برای کاهش ریسک lockout کاربران مبتدی
   - پشتیبانی از چند IP مدیریتی (ورودی comma-separated) برای جلوگیری از قفل شدن SSH در تغییر IP/مسیر دسترسی
   - تشخیص خودکار IP سمت مقابل SSH tunnel و افزودن آن به allowlist/Fail2ban ignore (با امکان تایید/ویرایش)
+- در اجرای مجدد Wizard، IP سشن فعلی ادمین و IPهای SSH محدودشدهٔ موجود UFW به‌صورت خودکار به allowlist اضافه می‌شوند تا ریسک lockout کمتر شود
 - تنظیم `ufw` با درنظر گرفتن:
   - IP مدیریتی شما
   - پورت SSH
@@ -146,6 +147,26 @@ sudo bash <(curl -fsSL https://raw.githubusercontent.com/vahid162/tunnel-secure/
 - قبل/بعد از هر تغییر، یک audit بگیر تا تفاوت‌ها را سریع ببینی.
 - تا وقتی اتصال جدید را تست نکرده‌ای، سشن فعلی SSH را نبند.
 
+## ماتریس سناریوها (برای جلوگیری از تداخل)
+
+- **فقط SSH tunnel داری (بدون GRE):**
+  - `Tunnel mode = 1 (ssh)`
+  - پورت(های) سرویس SSH tunnel را در `SSH tunnel service port(s)` وارد کن.
+- **فقط GRE داری (بدون SSH tunnel):**
+  - `Tunnel mode = 2 (gre)`
+  - `GRE peer IP` را دقیق وارد کن.
+- **SSH + GRE هر دو فعال هستند:**
+  - `Tunnel mode = 3 (both)`
+  - هم `GRE peer IP` را وارد کن، هم پورت‌های SSH tunnel را.
+- **در حال مهاجرت (یکی اضافه/حذف می‌شود):**
+  - قبل/بعد تغییر audit بگیر و Wizard را دوباره اجرا کن.
+
+### نکته مهم درباره `SSH firewall mode`
+
+- اگر `SSH firewall mode = 1 (restricted)` باشد: فقط IPهای allowlist اجازه SSH دارند.
+- اگر `SSH firewall mode = 2 (open + Fail2ban)` باشد: پورت SSH برای همه باز است و allowlist برای خودِ SSH اعمال نمی‌شود.
+- در سناریوی ایران/خارج، IP سمت مقابل SSH tunnel به‌صورت auto-detect پیشنهاد می‌شود و می‌تواند برای allowlist/Fail2ban ignore استفاده شود.
+
 ## نکته مهم
 
 قبل از فعال‌سازی فایروال، حتماً یک دسترسی اضطراری (کنسول پنل/VNC/KVM) داشته باشید.
@@ -153,6 +174,8 @@ sudo bash <(curl -fsSL https://raw.githubusercontent.com/vahid162/tunnel-secure/
 در حالت `SSH firewall mode = restricted`، فقط IPهای مدیریتی که وارد کرده‌اید اجازه SSH خواهند داشت. اگر IP فعلی/پشتیبان شما در لیست نباشد، ممکن است دسترسی SSH قطع شود (lockout).
 
 برای سناریوی tunnel بین ایران/خارج، Wizard تلاش می‌کند IP سمت مقابل SSH tunnel را تشخیص دهد و آن را برای SSH allowlist و Fail2ban ignore پیشنهاد/اعمال کند تا تداخل کمتر شود.
+
+در اجرای مجدد Wizard، IP سشن SSH فعلی شما و IPهای محدودشدهٔ قبلی UFW برای SSH به allowlist merge می‌شوند تا احتمال قطع دسترسی کاهش یابد.
 
 ## بکاپ‌ها
 

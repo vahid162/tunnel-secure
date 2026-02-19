@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_VERSION="1.4.10"
+SCRIPT_VERSION="1.4.12"
 BACKUP_DIR="/root/tunnel-secure-backups"
 
 red() { printf '\033[31m%s\033[0m\n' "$*"; }
@@ -73,6 +73,21 @@ auto_detect_ssh_tunnel_peer_ip() {
   local ssh_port="$1"
   local admin_ip="$2"
   ss -tn state established "( sport = :${ssh_port} )" 2>/dev/null     | awk -v admin_ip="$admin_ip" 'NR>1 {split($5,a,":"); ip=a[1]; gsub(/\[|\]/,"",ip); if (ip != "" && ip != admin_ip) print ip}'     | awk '!seen[$0]++' | head -n1 || true
+}
+
+auto_detect_existing_ufw_admin_ips() {
+  local ssh_port="$1"
+  [[ -f /etc/ufw/user.rules ]] || return 0
+  awk -v port="$ssh_port" '
+    /-A ufw-user-input/ && /-p tcp/ && $0 ~ ("--dport " port) {
+      for (i=1; i<=NF; i++) {
+        if ($i == "-s" && (i+1)<=NF) {
+          src=$(i+1)
+          if (src != "0.0.0.0/0") print src
+        }
+      }
+    }
+  ' /etc/ufw/user.rules | awk '!seen[$0]++' | paste -sd, - || true
 }
 
 validate_port() {
@@ -417,6 +432,17 @@ main() {
     exit 1
   fi
 
+  detected_existing_ufw_admin_ips="$(auto_detect_existing_ufw_admin_ips "$ssh_port")"
+  if [[ -n "$detected_existing_ufw_admin_ips" ]]; then
+    mgmt_ip_csv="$(normalize_csv_unique "$mgmt_ip_csv,$detected_existing_ufw_admin_ips")"
+    yellow "Existing UFW restricted SSH source IPs were auto-added to management allowlist: $detected_existing_ufw_admin_ips"
+  fi
+
+  if [[ -n "$detected_admin_ip" ]]; then
+    mgmt_ip_csv="$(normalize_csv_unique "$mgmt_ip_csv,$detected_admin_ip")"
+    yellow "Current admin session IP was auto-added to management allowlist: $detected_admin_ip"
+  fi
+
   case "$detected_tunnel_mode" in
     ssh) mode_default="1" ;;
     gre) mode_default="2" ;;
@@ -511,8 +537,16 @@ main() {
     configure_sshd "$ssh_port" "$disable_password" "$allow_users"
   fi
 
+  fail2ban_ignoreip_csv=""
+  if [[ -n "$detected_admin_ip" ]]; then
+    fail2ban_ignoreip_csv="$detected_admin_ip"
+  fi
+  if [[ -n "$trusted_tunnel_peer_ip" ]]; then
+    fail2ban_ignoreip_csv="$(normalize_csv_unique "$fail2ban_ignoreip_csv,$trusted_tunnel_peer_ip")"
+  fi
+
   if ask_yes_no "Install and enable Fail2ban now?" "y"; then
-    configure_fail2ban "$ssh_port" "$trusted_tunnel_peer_ip"
+    configure_fail2ban "$ssh_port" "$fail2ban_ignoreip_csv"
   fi
 
   if [[ "$tunnel_mode" == "gre" || "$tunnel_mode" == "both" ]]; then
