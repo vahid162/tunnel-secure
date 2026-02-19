@@ -59,6 +59,16 @@ bash <(curl -fsSL https://raw.githubusercontent.com/vahid162/tunnel-secure/main/
 bash <(wget -qO- https://raw.githubusercontent.com/vahid162/tunnel-secure/main/scripts/tunnel-security-wizard.sh)
 ```
 
+## اسکریپت بررسی وضعیت (بدون تغییر)
+
+برای بررسی اینکه تنظیمات اعمال‌شده سالم هستند (بدون اعمال هیچ تغییری روی سرور):
+
+```bash
+sudo bash <(curl -fsSL https://raw.githubusercontent.com/vahid162/tunnel-secure/main/scripts/tunnel-security-audit.sh)
+```
+
+این اسکریپت فقط گزارش می‌دهد: وضعیت SSH، UFW، Fail2ban، پورت‌های listen، اینترفیس‌های GRE/TUN/TAP و بکاپ‌ها.
+
 ## رفع خطای رایج
 
 اگر خطای زیر را دیدید:
