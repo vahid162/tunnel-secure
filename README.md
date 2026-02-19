@@ -2,6 +2,11 @@
 
 این ریپو یک اسکریپت Wizard برای سخت‌سازی امنیت سرورهایی دارد که از `ssh-tunnel` یا `gre-4` (یا هر دو همزمان) استفاده می‌کنند، با تمرکز روی این‌که تونل شما قطع نشود.
 
+## ریپوهای مرتبط
+
+- `gre-4`: https://github.com/vahid162/gre-4
+- `ssh-tunnel`: https://github.com/vahid162/ssh-tunnel
+
 ## اسکریپت
 
 - مسیر: `scripts/tunnel-security-wizard.sh`
@@ -19,6 +24,8 @@
 - انتخاب حالت دسترسی SSH در UFW:
   - حالت محدود (فقط IP مدیریتی)
   - حالت باز (پورت SSH باز + اتکا به Fail2ban)
+  - پیش‌فرض این گزینه روی حالت باز + Fail2ban (گزینه ۲) برای کاهش ریسک lockout کاربران مبتدی
+  - پشتیبانی از چند IP مدیریتی (ورودی comma-separated) برای جلوگیری از قفل شدن SSH در تغییر IP/مسیر دسترسی
 - تنظیم `ufw` با درنظر گرفتن:
   - IP مدیریتی شما
   - پورت SSH
@@ -38,9 +45,111 @@
 sudo bash scripts/tunnel-security-wizard.sh
 ```
 
+## اجرای سریع (فقط با کپی/پیست)
+
+مثل ریپوهای `gre-4` و `ssh-tunnel` می‌توانید بدون clone کردن دستی، مستقیم با یک دستور اجرا کنید:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/vahid162/tunnel-secure/main/scripts/tunnel-security-wizard.sh)
+```
+
+اگر `curl` نصب نبود، از `wget` استفاده کنید:
+
+```bash
+bash <(wget -qO- https://raw.githubusercontent.com/vahid162/tunnel-secure/main/scripts/tunnel-security-wizard.sh)
+```
+
+## اسکریپت بررسی وضعیت (بدون تغییر)
+
+برای بررسی اینکه تنظیمات اعمال‌شده سالم هستند (بدون اعمال هیچ تغییری روی سرور):
+
+```bash
+sudo bash <(curl -fsSL https://raw.githubusercontent.com/vahid162/tunnel-secure/main/scripts/tunnel-security-audit.sh)
+```
+
+این اسکریپت فقط گزارش می‌دهد: وضعیت SSH، UFW، Fail2ban، پورت‌های listen، اینترفیس‌های GRE/TUN/TAP و بکاپ‌ها.
+
+## رفع خطای رایج
+
+اگر خطای زیر را دیدید:
+
+```bash
+bash: scripts/tunnel-security-wizard.sh: No such file or directory
+```
+
+یعنی در مسیر اشتباه هستید و از داخل پوشه‌ی ریپو دستور را اجرا نکرده‌اید. اول به مسیر پروژه بروید و بعد اجرا کنید:
+
+```bash
+cd /workspace/tunnel-secure
+sudo bash scripts/tunnel-security-wizard.sh
+```
+
+اگر پروژه را جای دیگری clone کرده‌اید، به‌جای `/workspace/tunnel-secure` مسیر واقعی همان پوشه را بگذارید.
+
+## سناریوی پیشنهادی: الان SSH داری و بعداً می‌خواهی GRE اضافه کنی
+
+اگر الان سرورت روی `ssh-tunnel` پایدار است و بعداً می‌خواهی `gre-4` را هم اضافه کنی، مسیر امن پیشنهادی این است:
+
+1. **اول وضعیت فعلی را فریز و بررسی کن**
+   - با اسکریپت audit وضعیت SSH/UFW/Fail2ban را ثبت کن.
+   - حتماً کنسول اضطراری (VNC/KVM) در دسترس باشد.
+2. **GRE را جداگانه نصب/بالا بیاور (بدون دست‌زدن به فایروال)**
+   - طبق ریپوی `gre-4` فقط اینترفیس GRE را بالا بیاور و `ping` دو سر GRE را تست کن.
+3. **بعد Wizard را دوباره در حالت `both` اجرا کن**
+   - `Tunnel mode = 3 (both)`
+   - `GRE peer IP` را دقیق وارد کن.
+   - اگر GRE برای روتینگ است، گزینه forwarding را هم `y` بزن.
+4. **در مرحله UFW، پورت‌های SSH tunnel را هم نگه‌دار**
+   - اگر هنوز سرویس SSH tunnel لازم است، پورت‌هایش را در `SSH tunnel service port(s)` وارد کن.
+   - اگر لازم نیست، خالی بگذار.
+5. **تست بعد از اعمال**
+   - قبل از بستن سشن فعلی، یک SSH سشن جدید باز کن.
+   - `ufw status verbose`، `ip a`، `ip route` و `ping` روی IP تونل GRE را بررسی کن.
+
+### دستورهای پیشنهادی سریع برای این سناریو
+
+```bash
+# 1) قبل از تغییر: گزارش بدون تغییر
+sudo bash <(curl -fsSL https://raw.githubusercontent.com/vahid162/tunnel-secure/main/scripts/tunnel-security-audit.sh)
+
+# 2) بعد از بالا آوردن GRE: اجرای Wizard در حالت both
+bash <(curl -fsSL https://raw.githubusercontent.com/vahid162/tunnel-secure/main/scripts/tunnel-security-wizard.sh)
+# داخل Wizard: Tunnel mode = 3 (both)
+
+# 3) بعد از اعمال: دوباره audit بگیر
+sudo bash <(curl -fsSL https://raw.githubusercontent.com/vahid162/tunnel-secure/main/scripts/tunnel-security-audit.sh)
+```
+
+## سناریوی برعکس: الان GRE داری و بعداً می‌خواهی SSH Tunnel اضافه کنی
+
+اگر الان `gre-4` فعال است و بعداً می‌خواهی `ssh-tunnel` را هم اضافه کنی، همین منطق را برعکس اجرا کن:
+
+1. **قبل از هر تغییر audit بگیر**
+   - وضعیت فعلی GRE/UFW/SSH را ذخیره کن.
+2. **SSH tunnel را جداگانه بالا بیاور (بدون تغییر فوری فایروال)**
+   - طبق ریپوی `ssh-tunnel` سرویس را بالا بیاور و listen بودن پورت سرویس را چک کن.
+3. **Wizard را در حالت `both` اجرا کن**
+   - `Tunnel mode = 3 (both)`
+   - `GRE peer IP` و اینترفیس GRE را دقیق وارد کن.
+4. **در مرحله `SSH tunnel service port(s)` پورت‌های SSH tunnel را دقیق وارد کن**
+   - مثال: `443/tcp` یا `443/tcp,80/tcp`
+   - اگر این مرحله خالی بماند، با `deny incoming` ممکن است سرویس SSH tunnel از بیرون قطع شود.
+5. **تست نهایی بدون قطع سشن فعلی**
+   - یک SSH سشن جدید باز کن.
+   - سلامت GRE + SSH tunnel را با `ufw status verbose`، `ss -lntup` و تست اتصال واقعی چک کن.
+
+## قاعده طلایی برای جلوگیری از تداخل سناریوها
+
+- هر بار که یکی از تونل‌ها (SSH/GRE) اضافه یا حذف می‌شود، Wizard را دوباره اجرا کن.
+- همیشه در Wizard حالتی را انتخاب کن که واقعاً الان روی سرور فعال است (`ssh` یا `gre` یا `both`).
+- قبل/بعد از هر تغییر، یک audit بگیر تا تفاوت‌ها را سریع ببینی.
+- تا وقتی اتصال جدید را تست نکرده‌ای، سشن فعلی SSH را نبند.
+
 ## نکته مهم
 
 قبل از فعال‌سازی فایروال، حتماً یک دسترسی اضطراری (کنسول پنل/VNC/KVM) داشته باشید.
+
+در حالت `SSH firewall mode = restricted`، فقط IPهای مدیریتی که وارد کرده‌اید اجازه SSH خواهند داشت. اگر IP فعلی/پشتیبان شما در لیست نباشد، ممکن است دسترسی SSH قطع شود (lockout).
 
 ## بکاپ‌ها
 
