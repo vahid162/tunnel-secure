@@ -59,4 +59,17 @@ if ! grep -q 'auto_detect_existing_ufw_admin_ips' "$WIZARD"; then
 fi
 pass "rerun safety checks present"
 
+if ! grep -q 'Select mode (1=apply/update security, 2=rollback to previous restore point)' "$WIZARD"; then
+  fail "operation mode prompt missing"
+fi
+pass "operation mode prompt present"
+
+if ! grep -q '^create_restore_point() {' "$WIZARD"; then
+  fail "create_restore_point function missing"
+fi
+if ! grep -q '^run_rollback_flow() {' "$WIZARD"; then
+  fail "run_rollback_flow function missing"
+fi
+pass "rollback flow functions present"
+
 printf '\nAll self-tests passed.\n'

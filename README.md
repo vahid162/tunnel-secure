@@ -28,6 +28,8 @@
   - پشتیبانی از چند IP مدیریتی (ورودی comma-separated) برای جلوگیری از قفل شدن SSH در تغییر IP/مسیر دسترسی
   - تشخیص خودکار IP سمت مقابل SSH tunnel و افزودن آن به allowlist/Fail2ban ignore (با امکان تایید/ویرایش)
 - در اجرای مجدد Wizard، IP سشن فعلی ادمین و IPهای SSH محدودشدهٔ موجود UFW به‌صورت خودکار به allowlist اضافه می‌شوند تا ریسک lockout کمتر شود
+- در شروع هر اجرای اعمال تغییرات، یک Restore Point کامل از SSH/Fail2ban/UFW/Sysctl ساخته می‌شود
+- اجرای دوباره Wizard حالا یک حالت Rollback دارد تا با انتخاب Restore Point، تنظیمات به وضعیت قبلی برگردد
 - تنظیم `ufw` با درنظر گرفتن:
   - IP مدیریتی شما
   - پورت SSH
@@ -46,6 +48,13 @@
 ```bash
 sudo bash scripts/tunnel-security-wizard.sh
 ```
+
+در ابتدای اجرا دو حالت دارید:
+
+- `1) apply/update security` برای اعمال/بروزرسانی تنظیمات امنیتی
+- `2) rollback to previous restore point` برای بازگردانی تنظیمات از روی بکاپ‌های Restore Point
+
+در حالت rollback، اسکریپت لیست restore point های موجود را نشان می‌دهد، شماره را انتخاب می‌کنید و پس از تایید، تنظیمات SSH/Fail2ban/UFW/Sysctl را برمی‌گرداند.
 
 ## اجرای سریع (فقط با کپی/پیست)
 

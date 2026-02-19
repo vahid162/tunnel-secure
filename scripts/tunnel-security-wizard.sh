@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_VERSION="1.4.13"
+SCRIPT_VERSION="1.4.14"
 BACKUP_DIR="/root/tunnel-secure-backups"
 
 red() { printf '\033[31m%s\033[0m\n' "$*"; }
@@ -135,6 +135,154 @@ backup_file() {
   if [[ -f "$src" ]]; then
     cp -a "$src" "$BACKUP_DIR/$(basename "$src").$(date +%F-%H%M%S).bak"
   fi
+}
+
+snapshot_file() {
+  local src="$1"
+  local snapshot_dir="$2"
+  local rel
+  [[ -f "$src" ]] || return 0
+  rel="${src#/}"
+  mkdir -p "$snapshot_dir/$(dirname "$rel")"
+  cp -a "$src" "$snapshot_dir/$rel"
+}
+
+create_restore_point() {
+  local run_ts snapshot_dir
+  run_ts="$(date +%F-%H%M%S)"
+  snapshot_dir="$BACKUP_DIR/restore-point-$run_ts"
+
+  mkdir -p "$snapshot_dir"
+  snapshot_file /etc/ssh/sshd_config.d/00-tunnel-secure.conf "$snapshot_dir"
+  snapshot_file /etc/fail2ban/jail.local "$snapshot_dir"
+  snapshot_file /etc/default/ufw "$snapshot_dir"
+  snapshot_file /etc/sysctl.d/99-tunnel-secure.conf "$snapshot_dir"
+
+  if [[ -d /etc/ufw ]]; then
+    tar -czf "$snapshot_dir/etc-ufw.tar.gz" -C / etc/ufw >/dev/null 2>&1 || true
+  fi
+
+  cat > "$snapshot_dir/manifest.txt" <<EOM
+created_at=$(date -Is)
+hostname=$(hostname -f 2>/dev/null || hostname)
+wizard_version=${SCRIPT_VERSION}
+EOM
+
+  echo "$snapshot_dir"
+}
+
+restore_latest_backup() {
+  local pattern="$1"
+  local target="$2"
+  local latest_backup
+
+  latest_backup="$(ls -1t "$BACKUP_DIR"/$pattern 2>/dev/null | head -n1 || true)"
+  [[ -n "$latest_backup" ]] || return 1
+
+  mkdir -p "$(dirname "$target")"
+  cp -a "$latest_backup" "$target"
+  return 0
+}
+
+rollback_from_restore_point() {
+  local restore_point="$1"
+  local restored_any="no"
+
+  blue "\n[Rollback] Restoring from: $restore_point"
+
+  if [[ -f "$restore_point/etc/ssh/sshd_config.d/00-tunnel-secure.conf" ]]; then
+    mkdir -p /etc/ssh/sshd_config.d
+    cp -a "$restore_point/etc/ssh/sshd_config.d/00-tunnel-secure.conf" /etc/ssh/sshd_config.d/00-tunnel-secure.conf
+    restored_any="yes"
+  else
+    restore_latest_backup '00-tunnel-secure.conf.*.bak' '/etc/ssh/sshd_config.d/00-tunnel-secure.conf' || true
+  fi
+
+  if ! sshd -t; then
+    red "Rollback stopped: restored SSH config failed validation."
+    exit 1
+  fi
+  systemctl restart ssh || systemctl restart sshd
+
+  if [[ -f "$restore_point/etc/fail2ban/jail.local" ]]; then
+    mkdir -p /etc/fail2ban
+    cp -a "$restore_point/etc/fail2ban/jail.local" /etc/fail2ban/jail.local
+    systemctl restart fail2ban || true
+    restored_any="yes"
+  elif restore_latest_backup 'jail.local.*.bak' '/etc/fail2ban/jail.local'; then
+    systemctl restart fail2ban || true
+    restored_any="yes"
+  fi
+
+  if [[ -f "$restore_point/etc/default/ufw" ]]; then
+    cp -a "$restore_point/etc/default/ufw" /etc/default/ufw
+    restored_any="yes"
+  elif restore_latest_backup 'ufw.*.bak' '/etc/default/ufw'; then
+    restored_any="yes"
+  fi
+
+  if [[ -f "$restore_point/etc/sysctl.d/99-tunnel-secure.conf" ]]; then
+    mkdir -p /etc/sysctl.d
+    cp -a "$restore_point/etc/sysctl.d/99-tunnel-secure.conf" /etc/sysctl.d/99-tunnel-secure.conf
+    sysctl --system >/dev/null || true
+    restored_any="yes"
+  elif restore_latest_backup '99-tunnel-secure.conf.*.bak' '/etc/sysctl.d/99-tunnel-secure.conf'; then
+    sysctl --system >/dev/null || true
+    restored_any="yes"
+  fi
+
+  if [[ -f "$restore_point/etc-ufw.tar.gz" ]]; then
+    tar -xzf "$restore_point/etc-ufw.tar.gz" -C / >/dev/null 2>&1
+    ufw --force enable >/dev/null 2>&1 || true
+    restored_any="yes"
+  fi
+
+  if [[ "$restored_any" != "yes" ]]; then
+    yellow "No rollback data found to restore."
+    return 1
+  fi
+
+  green "Rollback completed from restore point."
+  yellow "Please open a new SSH session now and verify access before closing this one."
+}
+
+run_rollback_flow() {
+  local -a restore_points
+  local selected_index selected_path
+
+  mkdir -p "$BACKUP_DIR"
+
+  mapfile -t restore_points < <(find "$BACKUP_DIR" -maxdepth 1 -type d -name 'restore-point-*' | sort -r)
+
+  if [[ ${#restore_points[@]} -eq 0 ]]; then
+    red "No restore points found in $BACKUP_DIR"
+    exit 1
+  fi
+
+  yellow "Available restore points (newest first):"
+  for i in "${!restore_points[@]}"; do
+    printf '  %d) %s\n' "$((i+1))" "${restore_points[$i]}"
+  done
+
+  selected_index="$(ask 'Select restore point number' '1')"
+  if ! [[ "$selected_index" =~ ^[0-9]+$ ]]; then
+    red "Invalid selection. Must be a number."
+    exit 1
+  fi
+  if (( selected_index < 1 || selected_index > ${#restore_points[@]} )); then
+    red "Invalid selection. Number out of range."
+    exit 1
+  fi
+
+  selected_path="${restore_points[$((selected_index-1))]}"
+
+  if ! ask_yes_no "Rollback now from selected restore point?" "n"; then
+    yellow "Rollback canceled by user."
+    exit 0
+  fi
+
+  rollback_from_restore_point "$selected_path"
+  exit 0
 }
 
 ensure_package() {
@@ -387,6 +535,16 @@ main() {
   yellow "This wizard can auto-detect SSH/GRE tunnel signals and suggest safe defaults."
   yellow "Before applying final changes, make sure you have emergency console access."
 
+  operation_mode="$(ask 'Select mode (1=apply/update security, 2=rollback to previous restore point)' '1')"
+  case "$operation_mode" in
+    1) ;;
+    2) run_rollback_flow ;;
+    *)
+      red "Invalid mode selected."
+      exit 1
+      ;;
+  esac
+
   if ! ask_yes_no "Do you want to continue?" "y"; then
     echo "Exit."
     exit 0
@@ -394,6 +552,9 @@ main() {
 
   export DEBIAN_FRONTEND=noninteractive
   apt-get update >/dev/null
+
+  restore_point_created="$(create_restore_point)"
+  yellow "Restore point created: $restore_point_created"
 
   detected_admin_ip="$(auto_detect_admin_ip)"
   detected_mgmt_ip="$detected_admin_ip"
