@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_VERSION="1.4.0"
+SCRIPT_VERSION="1.4.14"
 BACKUP_DIR="/root/tunnel-secure-backups"
 
 red() { printf '\033[31m%s\033[0m\n' "$*"; }
@@ -41,6 +41,53 @@ validate_ipv4_or_cidr() {
   fi
 
   is_valid_ipv4 "$ip"
+}
+
+validate_ipv4_or_cidr_list() {
+  local input_csv="$1"
+  local -a ip_list
+  local item
+
+  IFS=',' read -r -a ip_list <<< "$input_csv"
+  [[ ${#ip_list[@]} -gt 0 ]] || return 1
+
+  for item in "${ip_list[@]}"; do
+    item="$(echo "$item" | xargs)"
+    [[ -n "$item" ]] || return 1
+    validate_ipv4_or_cidr "$item" || return 1
+  done
+}
+
+normalize_csv_unique() {
+  local input_csv="$1"
+  awk -v RS=',' '
+    {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", $0)
+      if ($0 != "" && !seen[$0]++) out = out (out ? "," : "") $0
+    }
+    END {print out}
+  ' <<< "$input_csv"
+}
+
+auto_detect_ssh_tunnel_peer_ip() {
+  local ssh_port="$1"
+  local admin_ip="$2"
+  ss -tn state established "( sport = :${ssh_port} )" 2>/dev/null     | awk -v admin_ip="$admin_ip" 'NR>1 {split($5,a,":"); ip=a[1]; gsub(/\[|\]/,"",ip); if (ip != "" && ip != admin_ip) print ip}'     | awk '!seen[$0]++' | head -n1 || true
+}
+
+auto_detect_existing_ufw_admin_ips() {
+  local ssh_port="$1"
+  [[ -f /etc/ufw/user.rules ]] || return 0
+  awk -v port="$ssh_port" '
+    /-A ufw-user-input/ && /-p tcp/ && $0 ~ ("--dport " port) {
+      for (i=1; i<=NF; i++) {
+        if ($i == "-s" && (i+1)<=NF) {
+          src=$(i+1)
+          if (src != "0.0.0.0/0") print src
+        }
+      }
+    }
+  ' /etc/ufw/user.rules | awk '!seen[$0]++' | paste -sd, - || true
 }
 
 validate_port() {
@@ -90,10 +137,181 @@ backup_file() {
   fi
 }
 
+snapshot_file() {
+  local src="$1"
+  local snapshot_dir="$2"
+  local rel
+  [[ -f "$src" ]] || return 0
+  rel="${src#/}"
+  mkdir -p "$snapshot_dir/$(dirname "$rel")"
+  cp -a "$src" "$snapshot_dir/$rel"
+}
+
+create_restore_point() {
+  local run_ts snapshot_dir
+  run_ts="$(date +%F-%H%M%S)"
+  snapshot_dir="$BACKUP_DIR/restore-point-$run_ts"
+
+  mkdir -p "$snapshot_dir"
+  snapshot_file /etc/ssh/sshd_config.d/00-tunnel-secure.conf "$snapshot_dir"
+  snapshot_file /etc/fail2ban/jail.local "$snapshot_dir"
+  snapshot_file /etc/default/ufw "$snapshot_dir"
+  snapshot_file /etc/sysctl.d/99-tunnel-secure.conf "$snapshot_dir"
+
+  if [[ -d /etc/ufw ]]; then
+    tar -czf "$snapshot_dir/etc-ufw.tar.gz" -C / etc/ufw >/dev/null 2>&1 || true
+  fi
+
+  cat > "$snapshot_dir/manifest.txt" <<EOM
+created_at=$(date -Is)
+hostname=$(hostname -f 2>/dev/null || hostname)
+wizard_version=${SCRIPT_VERSION}
+EOM
+
+  echo "$snapshot_dir"
+}
+
+restore_latest_backup() {
+  local pattern="$1"
+  local target="$2"
+  local latest_backup
+
+  latest_backup="$(ls -1t "$BACKUP_DIR"/$pattern 2>/dev/null | head -n1 || true)"
+  [[ -n "$latest_backup" ]] || return 1
+
+  mkdir -p "$(dirname "$target")"
+  cp -a "$latest_backup" "$target"
+  return 0
+}
+
+rollback_from_restore_point() {
+  local restore_point="$1"
+  local restored_any="no"
+
+  blue "\n[Rollback] Restoring from: $restore_point"
+
+  if [[ -f "$restore_point/etc/ssh/sshd_config.d/00-tunnel-secure.conf" ]]; then
+    mkdir -p /etc/ssh/sshd_config.d
+    cp -a "$restore_point/etc/ssh/sshd_config.d/00-tunnel-secure.conf" /etc/ssh/sshd_config.d/00-tunnel-secure.conf
+    restored_any="yes"
+  else
+    restore_latest_backup '00-tunnel-secure.conf.*.bak' '/etc/ssh/sshd_config.d/00-tunnel-secure.conf' || true
+  fi
+
+  if ! sshd -t; then
+    red "Rollback stopped: restored SSH config failed validation."
+    exit 1
+  fi
+  systemctl restart ssh || systemctl restart sshd
+
+  if [[ -f "$restore_point/etc/fail2ban/jail.local" ]]; then
+    mkdir -p /etc/fail2ban
+    cp -a "$restore_point/etc/fail2ban/jail.local" /etc/fail2ban/jail.local
+    systemctl restart fail2ban || true
+    restored_any="yes"
+  elif restore_latest_backup 'jail.local.*.bak' '/etc/fail2ban/jail.local'; then
+    systemctl restart fail2ban || true
+    restored_any="yes"
+  fi
+
+  if [[ -f "$restore_point/etc/default/ufw" ]]; then
+    cp -a "$restore_point/etc/default/ufw" /etc/default/ufw
+    restored_any="yes"
+  elif restore_latest_backup 'ufw.*.bak' '/etc/default/ufw'; then
+    restored_any="yes"
+  fi
+
+  if [[ -f "$restore_point/etc/sysctl.d/99-tunnel-secure.conf" ]]; then
+    mkdir -p /etc/sysctl.d
+    cp -a "$restore_point/etc/sysctl.d/99-tunnel-secure.conf" /etc/sysctl.d/99-tunnel-secure.conf
+    sysctl --system >/dev/null || true
+    restored_any="yes"
+  elif restore_latest_backup '99-tunnel-secure.conf.*.bak' '/etc/sysctl.d/99-tunnel-secure.conf'; then
+    sysctl --system >/dev/null || true
+    restored_any="yes"
+  fi
+
+  if [[ -f "$restore_point/etc-ufw.tar.gz" ]]; then
+    tar -xzf "$restore_point/etc-ufw.tar.gz" -C / >/dev/null 2>&1
+    ufw --force enable >/dev/null 2>&1 || true
+    restored_any="yes"
+  fi
+
+  if [[ "$restored_any" != "yes" ]]; then
+    yellow "No rollback data found to restore."
+    return 1
+  fi
+
+  green "Rollback completed from restore point."
+  yellow "Please open a new SSH session now and verify access before closing this one."
+}
+
+run_rollback_flow() {
+  local -a restore_points
+  local selected_index selected_path
+
+  mkdir -p "$BACKUP_DIR"
+
+  mapfile -t restore_points < <(find "$BACKUP_DIR" -maxdepth 1 -type d -name 'restore-point-*' | sort -r)
+
+  if [[ ${#restore_points[@]} -eq 0 ]]; then
+    red "No restore points found in $BACKUP_DIR"
+    exit 1
+  fi
+
+  yellow "Available restore points (newest first):"
+  for i in "${!restore_points[@]}"; do
+    printf '  %d) %s\n' "$((i+1))" "${restore_points[$i]}"
+  done
+
+  selected_index="$(ask 'Select restore point number' '1')"
+  if ! [[ "$selected_index" =~ ^[0-9]+$ ]]; then
+    red "Invalid selection. Must be a number."
+    exit 1
+  fi
+  if (( selected_index < 1 || selected_index > ${#restore_points[@]} )); then
+    red "Invalid selection. Number out of range."
+    exit 1
+  fi
+
+  selected_path="${restore_points[$((selected_index-1))]}"
+
+  if ! ask_yes_no "Rollback now from selected restore point?" "n"; then
+    yellow "Rollback canceled by user."
+    exit 0
+  fi
+
+  rollback_from_restore_point "$selected_path"
+  exit 0
+}
+
 ensure_package() {
   local pkg="$1"
   if ! dpkg -s "$pkg" >/dev/null 2>&1; then
     apt-get install -y "$pkg"
+  fi
+}
+
+auto_detect_admin_ip() {
+  if [[ -n "${SSH_CLIENT:-}" ]]; then
+    awk '{print $1}' <<< "$SSH_CLIENT"
+    return 0
+  fi
+
+  if [[ -n "${SSH_CONNECTION:-}" ]]; then
+    awk '{print $1}' <<< "$SSH_CONNECTION"
+    return 0
+  fi
+
+  who am i 2>/dev/null | awk '{print $NF}' | tr -d '()' | awk 'NF{print; exit}' || true
+}
+
+auto_detect_ssh_access_mode() {
+  local admin_ip="$1"
+  if validate_ipv4_or_cidr "$admin_ip"; then
+    echo "restricted"
+  else
+    echo "open"
   fi
 }
 
@@ -194,6 +412,7 @@ configure_sshd() {
 
 configure_fail2ban() {
   local ssh_port="$1"
+  local fail2ban_ignoreip_csv="${2:-}"
   blue "\n[Fail2ban] Enabling brute-force protection..."
   ensure_package fail2ban
   backup_file /etc/fail2ban/jail.local
@@ -203,6 +422,7 @@ configure_fail2ban() {
 bantime = 1h
 findtime = 10m
 maxretry = 5
+ignoreip = 127.0.0.1/8 ::1
 
 [sshd]
 enabled = true
@@ -211,12 +431,19 @@ logpath = %(sshd_log)s
 backend = %(sshd_backend)s
 EOC
 
+  if [[ -n "$fail2ban_ignoreip_csv" ]]; then
+    normalized_ignoreip="$(normalize_csv_unique "$fail2ban_ignoreip_csv")"
+    if [[ -n "$normalized_ignoreip" ]]; then
+      sed -i "s|^ignoreip = .*|ignoreip = 127.0.0.1/8 ::1 ${normalized_ignoreip//,/ }|" /etc/fail2ban/jail.local
+    fi
+  fi
+
   systemctl enable --now fail2ban
   green "Fail2ban enabled successfully."
 }
 
 configure_ufw() {
-  local mgmt_ip="$1"
+  local mgmt_ip_csv="$1"
   local ssh_port="$2"
   local tunnel_mode="$3"
   local gre_peer_ip="$4"
@@ -240,7 +467,12 @@ configure_ufw() {
   if [[ "$ssh_access_mode" == "open" ]]; then
     ufw allow "$ssh_port"/tcp comment 'ssh open with fail2ban'
   else
-    ufw allow from "$mgmt_ip" to any port "$ssh_port" proto tcp comment 'admin ssh restricted'
+    IFS="," read -r -a mgmt_ip_list <<< "$mgmt_ip_csv"
+    for admin_ip in "${mgmt_ip_list[@]}"; do
+      admin_ip="$(echo "$admin_ip" | xargs)"
+      [[ -z "$admin_ip" ]] && continue
+      ufw allow from "$admin_ip" to any port "$ssh_port" proto tcp comment 'admin ssh restricted'
+    done
   fi
 
   IFS=',' read -r -a extra_ports <<< "$extra_ports_csv"
@@ -303,6 +535,16 @@ main() {
   yellow "This wizard can auto-detect SSH/GRE tunnel signals and suggest safe defaults."
   yellow "Before applying final changes, make sure you have emergency console access."
 
+  operation_mode="$(ask 'Select mode (1=apply/update security, 2=rollback to previous restore point)' '1')"
+  case "$operation_mode" in
+    1) ;;
+    2) run_rollback_flow ;;
+    *)
+      red "Invalid mode selected."
+      exit 1
+      ;;
+  esac
+
   if ! ask_yes_no "Do you want to continue?" "y"; then
     echo "Exit."
     exit 0
@@ -311,12 +553,19 @@ main() {
   export DEBIAN_FRONTEND=noninteractive
   apt-get update >/dev/null
 
-  detected_mgmt_ip="$(auto_detect_mgmt_ip)"
+  restore_point_created="$(create_restore_point)"
+  yellow "Restore point created: $restore_point_created"
+
+  detected_admin_ip="$(auto_detect_admin_ip)"
+  detected_mgmt_ip="$detected_admin_ip"
+  [[ -z "$detected_mgmt_ip" ]] && detected_mgmt_ip="$(auto_detect_mgmt_ip)"
   detected_ssh_port="$(auto_detect_ssh_port)"
   detected_tunnel_mode="$(auto_detect_tunnel_mode)"
   detected_gre_iface="$(auto_detect_gre_iface)"
   detected_gre_peer="$(auto_detect_gre_peer "$detected_gre_iface")"
   detected_wan_iface="$(auto_detect_wan_iface)"
+  detected_ssh_access_mode="$(auto_detect_ssh_access_mode "$detected_mgmt_ip")"
+  detected_ssh_tunnel_peer_ip="$(auto_detect_ssh_tunnel_peer_ip "$detected_ssh_port" "$detected_admin_ip")"
 
   [[ -z "$detected_mgmt_ip" ]] && detected_mgmt_ip="1.2.3.4"
   [[ -z "$detected_ssh_port" ]] && detected_ssh_port="22"
@@ -329,10 +578,12 @@ main() {
   echo "  GRE Interface: $detected_gre_iface"
   echo "  GRE Peer IP: ${detected_gre_peer:-not-detected}"
   echo "  WAN Interface: ${detected_wan_iface:-not-detected}"
+  echo "  SSH Firewall Mode: $detected_ssh_access_mode"
+  echo "  SSH Tunnel Peer IP (auto): ${detected_ssh_tunnel_peer_ip:-not-detected}"
 
-  mgmt_ip="$(ask 'Management IP (example: 1.2.3.4 or 1.2.3.4/32)' "$detected_mgmt_ip")"
-  if ! validate_ipv4_or_cidr "$mgmt_ip"; then
-    red "Invalid management IP format."
+  mgmt_ip_csv="$(ask 'Management IP/CIDR list for SSH allow (comma-separated, example: 1.2.3.4/32,5.6.7.8)' "$detected_mgmt_ip")"
+  if ! validate_ipv4_or_cidr_list "$mgmt_ip_csv"; then
+    red "Invalid management IP list format. Use comma-separated IPv4 or CIDR values only."
     exit 1
   fi
 
@@ -340,6 +591,17 @@ main() {
   if ! validate_port "$ssh_port"; then
     red "Invalid SSH port. Must be a number between 1 and 65535."
     exit 1
+  fi
+
+  detected_existing_ufw_admin_ips="$(auto_detect_existing_ufw_admin_ips "$ssh_port")"
+  if [[ -n "$detected_existing_ufw_admin_ips" ]]; then
+    mgmt_ip_csv="$(normalize_csv_unique "$mgmt_ip_csv,$detected_existing_ufw_admin_ips")"
+    yellow "Existing UFW restricted SSH source IPs were auto-added to management allowlist: $detected_existing_ufw_admin_ips"
+  fi
+
+  if [[ -n "$detected_admin_ip" ]]; then
+    mgmt_ip_csv="$(normalize_csv_unique "$mgmt_ip_csv,$detected_admin_ip")"
+    yellow "Current admin session IP was auto-added to management allowlist: $detected_admin_ip"
   fi
 
   case "$detected_tunnel_mode" in
@@ -363,13 +625,34 @@ main() {
     *) yellow "Invalid option; defaulting to detected mode ($detected_tunnel_mode)."; tunnel_mode="$detected_tunnel_mode" ;;
   esac
 
+  ssh_access_mode_default="2"
+  yellow "Default is set to open + Fail2ban (option 2) to reduce accidental SSH lockout risk for beginners."
+
   ssh_access_mode="restricted"
-  ssh_access_mode_choice="$(ask 'SSH firewall mode? (1=restrict to management IP, 2=open SSH port and rely on Fail2ban)' '1')"
+  yellow "WARNING: If you select restricted mode (option 1), only the Management IP list can SSH. If current/backup admin IP is missing, you may lose SSH access (lockout). Keep console/KVM access ready."
+  ssh_access_mode_choice="$(ask 'SSH firewall mode? (1=restrict to management IP, 2=open SSH port and rely on Fail2ban)' "$ssh_access_mode_default")"
   case "$ssh_access_mode_choice" in
     1) ssh_access_mode="restricted" ;;
     2) ssh_access_mode="open" ;;
-    *) yellow "Invalid option; defaulting to restricted SSH firewall mode." ;;
+    *)
+      yellow "Invalid option; defaulting to detected SSH firewall mode ($detected_ssh_access_mode)."
+      ssh_access_mode="$detected_ssh_access_mode"
+      ;;
   esac
+
+  trusted_tunnel_peer_ip=""
+  if [[ "$tunnel_mode" == "ssh" || "$tunnel_mode" == "both" ]]; then
+    trusted_tunnel_peer_ip="$(ask 'Trusted SSH tunnel peer IP for allowlist/Fail2ban ignore (leave empty to skip)' "${detected_ssh_tunnel_peer_ip:-}")"
+    if [[ -n "$trusted_tunnel_peer_ip" ]] && ! validate_ipv4_or_cidr "$trusted_tunnel_peer_ip"; then
+      red "Invalid trusted SSH tunnel peer IP format."
+      exit 1
+    fi
+
+    if [[ -n "$trusted_tunnel_peer_ip" ]]; then
+      mgmt_ip_csv="$(normalize_csv_unique "$mgmt_ip_csv,$trusted_tunnel_peer_ip")"
+      yellow "Trusted SSH tunnel peer IP added to management allowlist automatically: $trusted_tunnel_peer_ip"
+    fi
+  fi
 
   extra_ports_csv=""
   if [[ "$tunnel_mode" == "ssh" || "$tunnel_mode" == "both" ]]; then
@@ -415,8 +698,16 @@ main() {
     configure_sshd "$ssh_port" "$disable_password" "$allow_users"
   fi
 
+  fail2ban_ignoreip_csv=""
+  if [[ -n "$detected_admin_ip" ]]; then
+    fail2ban_ignoreip_csv="$detected_admin_ip"
+  fi
+  if [[ -n "$trusted_tunnel_peer_ip" ]]; then
+    fail2ban_ignoreip_csv="$(normalize_csv_unique "$fail2ban_ignoreip_csv,$trusted_tunnel_peer_ip")"
+  fi
+
   if ask_yes_no "Install and enable Fail2ban now?" "y"; then
-    configure_fail2ban "$ssh_port"
+    configure_fail2ban "$ssh_port" "$fail2ban_ignoreip_csv"
   fi
 
   if [[ "$tunnel_mode" == "gre" || "$tunnel_mode" == "both" ]]; then
@@ -426,11 +717,13 @@ main() {
   fi
 
   if ask_yes_no "Apply and enable UFW firewall now?" "y"; then
-    configure_ufw "$mgmt_ip" "$ssh_port" "$tunnel_mode" "$gre_peer_ip" "$extra_ports_csv" "$gre_iface" "$enable_forwarding" "$wan_iface" "$ssh_access_mode"
+    configure_ufw "$mgmt_ip_csv" "$ssh_port" "$tunnel_mode" "$gre_peer_ip" "$extra_ports_csv" "$gre_iface" "$enable_forwarding" "$wan_iface" "$ssh_access_mode"
   fi
 
   green "\nDone. Backups were saved in: $BACKUP_DIR"
   yellow "Recommendation: open a new SSH session and verify connectivity before closing this one."
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi
