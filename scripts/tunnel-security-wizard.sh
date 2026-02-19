@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_VERSION="1.4.4"
+SCRIPT_VERSION="1.4.5"
 BACKUP_DIR="/root/tunnel-secure-backups"
 
 red() { printf '\033[31m%s\033[0m\n' "$*"; }
@@ -41,6 +41,21 @@ validate_ipv4_or_cidr() {
   fi
 
   is_valid_ipv4 "$ip"
+}
+
+validate_ipv4_or_cidr_list() {
+  local input_csv="$1"
+  local -a ip_list
+  local item
+
+  IFS=',' read -r -a ip_list <<< "$input_csv"
+  [[ ${#ip_list[@]} -gt 0 ]] || return 1
+
+  for item in "${ip_list[@]}"; do
+    item="$(echo "$item" | xargs)"
+    [[ -n "$item" ]] || return 1
+    validate_ipv4_or_cidr "$item" || return 1
+  done
 }
 
 validate_port() {
@@ -239,7 +254,7 @@ EOC
 }
 
 configure_ufw() {
-  local mgmt_ip="$1"
+  local mgmt_ip_csv="$1"
   local ssh_port="$2"
   local tunnel_mode="$3"
   local gre_peer_ip="$4"
@@ -263,7 +278,12 @@ configure_ufw() {
   if [[ "$ssh_access_mode" == "open" ]]; then
     ufw allow "$ssh_port"/tcp comment 'ssh open with fail2ban'
   else
-    ufw allow from "$mgmt_ip" to any port "$ssh_port" proto tcp comment 'admin ssh restricted'
+    IFS="," read -r -a mgmt_ip_list <<< "$mgmt_ip_csv"
+    for admin_ip in "${mgmt_ip_list[@]}"; do
+      admin_ip="$(echo "$admin_ip" | xargs)"
+      [[ -z "$admin_ip" ]] && continue
+      ufw allow from "$admin_ip" to any port "$ssh_port" proto tcp comment 'admin ssh restricted'
+    done
   fi
 
   IFS=',' read -r -a extra_ports <<< "$extra_ports_csv"
@@ -357,9 +377,9 @@ main() {
   echo "  WAN Interface: ${detected_wan_iface:-not-detected}"
   echo "  SSH Firewall Mode: $detected_ssh_access_mode"
 
-  mgmt_ip="$(ask 'Management IP (example: 1.2.3.4 or 1.2.3.4/32)' "$detected_mgmt_ip")"
-  if ! validate_ipv4_or_cidr "$mgmt_ip"; then
-    red "Invalid management IP format."
+  mgmt_ip_csv="$(ask 'Management IP/CIDR list for SSH allow (comma-separated, example: 1.2.3.4/32,5.6.7.8)' "$detected_mgmt_ip")"
+  if ! validate_ipv4_or_cidr_list "$mgmt_ip_csv"; then
+    red "Invalid management IP list format. Use comma-separated IPv4 or CIDR values only."
     exit 1
   fi
 
@@ -397,6 +417,9 @@ main() {
   fi
 
   ssh_access_mode="restricted"
+  if [[ "$ssh_access_mode_default" == "1" ]]; then
+    yellow "WARNING: Restricted mode only allows SSH from Management IP list. If your current/backup admin IP is missing, you may lose SSH access (lockout). Keep console/KVM access ready."
+  fi
   ssh_access_mode_choice="$(ask 'SSH firewall mode? (1=restrict to management IP, 2=open SSH port and rely on Fail2ban)' "$ssh_access_mode_default")"
   case "$ssh_access_mode_choice" in
     1) ssh_access_mode="restricted" ;;
@@ -462,7 +485,7 @@ main() {
   fi
 
   if ask_yes_no "Apply and enable UFW firewall now?" "y"; then
-    configure_ufw "$mgmt_ip" "$ssh_port" "$tunnel_mode" "$gre_peer_ip" "$extra_ports_csv" "$gre_iface" "$enable_forwarding" "$wan_iface" "$ssh_access_mode"
+    configure_ufw "$mgmt_ip_csv" "$ssh_port" "$tunnel_mode" "$gre_peer_ip" "$extra_ports_csv" "$gre_iface" "$enable_forwarding" "$wan_iface" "$ssh_access_mode"
   fi
 
   green "\nDone. Backups were saved in: $BACKUP_DIR"
