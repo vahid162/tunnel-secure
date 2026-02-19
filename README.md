@@ -26,6 +26,7 @@
   - حالت باز (پورت SSH باز + اتکا به Fail2ban)
   - پیش‌فرض این گزینه روی حالت باز + Fail2ban (گزینه ۲) برای کاهش ریسک lockout کاربران مبتدی
   - پشتیبانی از چند IP مدیریتی (ورودی comma-separated) برای جلوگیری از قفل شدن SSH در تغییر IP/مسیر دسترسی
+  - تشخیص خودکار IP سمت مقابل SSH tunnel و افزودن آن به allowlist/Fail2ban ignore (با امکان تایید/ویرایش)
 - تنظیم `ufw` با درنظر گرفتن:
   - IP مدیریتی شما
   - پورت SSH
@@ -150,6 +151,8 @@ sudo bash <(curl -fsSL https://raw.githubusercontent.com/vahid162/tunnel-secure/
 قبل از فعال‌سازی فایروال، حتماً یک دسترسی اضطراری (کنسول پنل/VNC/KVM) داشته باشید.
 
 در حالت `SSH firewall mode = restricted`، فقط IPهای مدیریتی که وارد کرده‌اید اجازه SSH خواهند داشت. اگر IP فعلی/پشتیبان شما در لیست نباشد، ممکن است دسترسی SSH قطع شود (lockout).
+
+برای سناریوی tunnel بین ایران/خارج، Wizard تلاش می‌کند IP سمت مقابل SSH tunnel را تشخیص دهد و آن را برای SSH allowlist و Fail2ban ignore پیشنهاد/اعمال کند تا تداخل کمتر شود.
 
 ## بکاپ‌ها
 

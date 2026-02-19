@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_VERSION="1.4.9"
+SCRIPT_VERSION="1.4.10"
 BACKUP_DIR="/root/tunnel-secure-backups"
 
 red() { printf '\033[31m%s\033[0m\n' "$*"; }
@@ -56,6 +56,23 @@ validate_ipv4_or_cidr_list() {
     [[ -n "$item" ]] || return 1
     validate_ipv4_or_cidr "$item" || return 1
   done
+}
+
+normalize_csv_unique() {
+  local input_csv="$1"
+  awk -v RS=',' '
+    {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", $0)
+      if ($0 != "" && !seen[$0]++) out = out (out ? "," : "") $0
+    }
+    END {print out}
+  ' <<< "$input_csv"
+}
+
+auto_detect_ssh_tunnel_peer_ip() {
+  local ssh_port="$1"
+  local admin_ip="$2"
+  ss -tn state established "( sport = :${ssh_port} )" 2>/dev/null     | awk -v admin_ip="$admin_ip" 'NR>1 {split($5,a,":"); ip=a[1]; gsub(/\[|\]/,"",ip); if (ip != "" && ip != admin_ip) print ip}'     | awk '!seen[$0]++' | head -n1 || true
 }
 
 validate_port() {
@@ -232,6 +249,7 @@ configure_sshd() {
 
 configure_fail2ban() {
   local ssh_port="$1"
+  local fail2ban_ignoreip_csv="${2:-}"
   blue "\n[Fail2ban] Enabling brute-force protection..."
   ensure_package fail2ban
   backup_file /etc/fail2ban/jail.local
@@ -241,6 +259,7 @@ configure_fail2ban() {
 bantime = 1h
 findtime = 10m
 maxretry = 5
+ignoreip = 127.0.0.1/8 ::1
 
 [sshd]
 enabled = true
@@ -248,6 +267,13 @@ port = ${ssh_port}
 logpath = %(sshd_log)s
 backend = %(sshd_backend)s
 EOC
+
+  if [[ -n "$fail2ban_ignoreip_csv" ]]; then
+    normalized_ignoreip="$(normalize_csv_unique "$fail2ban_ignoreip_csv")"
+    if [[ -n "$normalized_ignoreip" ]]; then
+      sed -i "s|^ignoreip = .*|ignoreip = 127.0.0.1/8 ::1 ${normalized_ignoreip//,/ }|" /etc/fail2ban/jail.local
+    fi
+  fi
 
   systemctl enable --now fail2ban
   green "Fail2ban enabled successfully."
@@ -363,6 +389,7 @@ main() {
   detected_gre_peer="$(auto_detect_gre_peer "$detected_gre_iface")"
   detected_wan_iface="$(auto_detect_wan_iface)"
   detected_ssh_access_mode="$(auto_detect_ssh_access_mode "$detected_mgmt_ip")"
+  detected_ssh_tunnel_peer_ip="$(auto_detect_ssh_tunnel_peer_ip "$detected_ssh_port" "$detected_admin_ip")"
 
   [[ -z "$detected_mgmt_ip" ]] && detected_mgmt_ip="1.2.3.4"
   [[ -z "$detected_ssh_port" ]] && detected_ssh_port="22"
@@ -376,6 +403,7 @@ main() {
   echo "  GRE Peer IP: ${detected_gre_peer:-not-detected}"
   echo "  WAN Interface: ${detected_wan_iface:-not-detected}"
   echo "  SSH Firewall Mode: $detected_ssh_access_mode"
+  echo "  SSH Tunnel Peer IP (auto): ${detected_ssh_tunnel_peer_ip:-not-detected}"
 
   mgmt_ip_csv="$(ask 'Management IP/CIDR list for SSH allow (comma-separated, example: 1.2.3.4/32,5.6.7.8)' "$detected_mgmt_ip")"
   if ! validate_ipv4_or_cidr_list "$mgmt_ip_csv"; then
@@ -425,6 +453,20 @@ main() {
       ;;
   esac
 
+  trusted_tunnel_peer_ip=""
+  if [[ "$tunnel_mode" == "ssh" || "$tunnel_mode" == "both" ]]; then
+    trusted_tunnel_peer_ip="$(ask 'Trusted SSH tunnel peer IP for allowlist/Fail2ban ignore (leave empty to skip)' "${detected_ssh_tunnel_peer_ip:-}")"
+    if [[ -n "$trusted_tunnel_peer_ip" ]] && ! validate_ipv4_or_cidr "$trusted_tunnel_peer_ip"; then
+      red "Invalid trusted SSH tunnel peer IP format."
+      exit 1
+    fi
+
+    if [[ -n "$trusted_tunnel_peer_ip" ]]; then
+      mgmt_ip_csv="$(normalize_csv_unique "$mgmt_ip_csv,$trusted_tunnel_peer_ip")"
+      yellow "Trusted SSH tunnel peer IP added to management allowlist automatically: $trusted_tunnel_peer_ip"
+    fi
+  fi
+
   extra_ports_csv=""
   if [[ "$tunnel_mode" == "ssh" || "$tunnel_mode" == "both" ]]; then
     extra_ports_csv="$(ask 'SSH tunnel service port(s), comma-separated (example: 443/tcp,80/tcp)' '')"
@@ -470,7 +512,7 @@ main() {
   fi
 
   if ask_yes_no "Install and enable Fail2ban now?" "y"; then
-    configure_fail2ban "$ssh_port"
+    configure_fail2ban "$ssh_port" "$trusted_tunnel_peer_ip"
   fi
 
   if [[ "$tunnel_mode" == "gre" || "$tunnel_mode" == "both" ]]; then
