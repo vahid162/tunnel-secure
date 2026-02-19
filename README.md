@@ -120,6 +120,31 @@ bash <(curl -fsSL https://raw.githubusercontent.com/vahid162/tunnel-secure/main/
 sudo bash <(curl -fsSL https://raw.githubusercontent.com/vahid162/tunnel-secure/main/scripts/tunnel-security-audit.sh)
 ```
 
+## سناریوی برعکس: الان GRE داری و بعداً می‌خواهی SSH Tunnel اضافه کنی
+
+اگر الان `gre-4` فعال است و بعداً می‌خواهی `ssh-tunnel` را هم اضافه کنی، همین منطق را برعکس اجرا کن:
+
+1. **قبل از هر تغییر audit بگیر**
+   - وضعیت فعلی GRE/UFW/SSH را ذخیره کن.
+2. **SSH tunnel را جداگانه بالا بیاور (بدون تغییر فوری فایروال)**
+   - طبق ریپوی `ssh-tunnel` سرویس را بالا بیاور و listen بودن پورت سرویس را چک کن.
+3. **Wizard را در حالت `both` اجرا کن**
+   - `Tunnel mode = 3 (both)`
+   - `GRE peer IP` و اینترفیس GRE را دقیق وارد کن.
+4. **در مرحله `SSH tunnel service port(s)` پورت‌های SSH tunnel را دقیق وارد کن**
+   - مثال: `443/tcp` یا `443/tcp,80/tcp`
+   - اگر این مرحله خالی بماند، با `deny incoming` ممکن است سرویس SSH tunnel از بیرون قطع شود.
+5. **تست نهایی بدون قطع سشن فعلی**
+   - یک SSH سشن جدید باز کن.
+   - سلامت GRE + SSH tunnel را با `ufw status verbose`، `ss -lntup` و تست اتصال واقعی چک کن.
+
+## قاعده طلایی برای جلوگیری از تداخل سناریوها
+
+- هر بار که یکی از تونل‌ها (SSH/GRE) اضافه یا حذف می‌شود، Wizard را دوباره اجرا کن.
+- همیشه در Wizard حالتی را انتخاب کن که واقعاً الان روی سرور فعال است (`ssh` یا `gre` یا `both`).
+- قبل/بعد از هر تغییر، یک audit بگیر تا تفاوت‌ها را سریع ببینی.
+- تا وقتی اتصال جدید را تست نکرده‌ای، سشن فعلی SSH را نبند.
+
 ## نکته مهم
 
 قبل از فعال‌سازی فایروال، حتماً یک دسترسی اضطراری (کنسول پنل/VNC/KVM) داشته باشید.
