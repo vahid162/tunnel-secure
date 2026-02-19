@@ -38,6 +38,33 @@
 sudo bash scripts/tunnel-security-wizard.sh
 ```
 
+## اجرای هوشمند (دانلود + ورود به پوشه + اجرا)
+
+اگر می‌خواهید با یک دستور همه‌چیز انجام شود (clone/update ریپو، ورود به پوشه، اجرای ویزارد):
+
+```bash
+bash -c 'set -e; REPO_DIR=/opt/tunnel-secure; REPO_URL=https://github.com/vahid162/tunnel-secure.git; if [ ! -d "$REPO_DIR/.git" ]; then sudo git clone "$REPO_URL" "$REPO_DIR"; else sudo git -C "$REPO_DIR" pull --ff-only; fi; cd "$REPO_DIR"; sudo bash scripts/tunnel-security-wizard.sh'
+```
+
+> اگر آدرس ریپو شما متفاوت است، مقدار `REPO_URL` را تغییر دهید.
+
+## رفع خطای رایج
+
+اگر خطای زیر را دیدید:
+
+```bash
+bash: scripts/tunnel-security-wizard.sh: No such file or directory
+```
+
+یعنی در مسیر اشتباه هستید و از داخل پوشه‌ی ریپو دستور را اجرا نکرده‌اید. اول به مسیر پروژه بروید و بعد اجرا کنید:
+
+```bash
+cd /workspace/tunnel-secure
+sudo bash scripts/tunnel-security-wizard.sh
+```
+
+اگر پروژه را جای دیگری clone کرده‌اید، به‌جای `/workspace/tunnel-secure` مسیر واقعی همان پوشه را بگذارید.
+
 ## نکته مهم
 
 قبل از فعال‌سازی فایروال، حتماً یک دسترسی اضطراری (کنسول پنل/VNC/KVM) داشته باشید.
