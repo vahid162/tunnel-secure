@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_VERSION="1.4.14"
+SCRIPT_VERSION="1.4.15"
 BACKUP_DIR="/root/tunnel-secure-backups"
 
 red() { printf '\033[31m%s\033[0m\n' "$*"; }
@@ -147,12 +147,57 @@ snapshot_file() {
   cp -a "$src" "$snapshot_dir/$rel"
 }
 
+record_snapshot_presence() {
+  local src="$1"
+  local snapshot_dir="$2"
+  local rel state_file
+
+  rel="${src#/}"
+  state_file="$snapshot_dir/file-state.txt"
+
+  if [[ -f "$src" ]]; then
+    printf 'present|%s\n' "$rel" >> "$state_file"
+  else
+    printf 'absent|%s\n' "$rel" >> "$state_file"
+  fi
+}
+
+restore_or_remove_snapshot_file() {
+  local restore_point="$1"
+  local target="$2"
+  local rel state
+
+  rel="${target#/}"
+
+  if [[ -f "$restore_point/$rel" ]]; then
+    mkdir -p "$(dirname "$target")"
+    cp -a "$restore_point/$rel" "$target"
+    return 0
+  fi
+
+  if [[ -f "$restore_point/file-state.txt" ]]; then
+    state="$(awk -F'|' -v rel="$rel" '$2==rel {print $1; exit}' "$restore_point/file-state.txt")"
+    if [[ "$state" == "absent" ]]; then
+      rm -f "$target"
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
 create_restore_point() {
   local run_ts snapshot_dir
   run_ts="$(date +%F-%H%M%S)"
   snapshot_dir="$BACKUP_DIR/restore-point-$run_ts"
 
   mkdir -p "$snapshot_dir"
+
+  record_snapshot_presence /etc/ssh/sshd_config.d/00-tunnel-secure.conf "$snapshot_dir"
+  record_snapshot_presence /etc/fail2ban/jail.local "$snapshot_dir"
+  record_snapshot_presence /etc/default/ufw "$snapshot_dir"
+  record_snapshot_presence /etc/sysctl.d/99-tunnel-secure.conf "$snapshot_dir"
+
   snapshot_file /etc/ssh/sshd_config.d/00-tunnel-secure.conf "$snapshot_dir"
   snapshot_file /etc/fail2ban/jail.local "$snapshot_dir"
   snapshot_file /etc/default/ufw "$snapshot_dir"
@@ -190,12 +235,10 @@ rollback_from_restore_point() {
 
   blue "\n[Rollback] Restoring from: $restore_point"
 
-  if [[ -f "$restore_point/etc/ssh/sshd_config.d/00-tunnel-secure.conf" ]]; then
-    mkdir -p /etc/ssh/sshd_config.d
-    cp -a "$restore_point/etc/ssh/sshd_config.d/00-tunnel-secure.conf" /etc/ssh/sshd_config.d/00-tunnel-secure.conf
+  if restore_or_remove_snapshot_file "$restore_point" '/etc/ssh/sshd_config.d/00-tunnel-secure.conf'; then
     restored_any="yes"
-  else
-    restore_latest_backup '00-tunnel-secure.conf.*.bak' '/etc/ssh/sshd_config.d/00-tunnel-secure.conf' || true
+  elif restore_latest_backup '00-tunnel-secure.conf.*.bak' '/etc/ssh/sshd_config.d/00-tunnel-secure.conf'; then
+    restored_any="yes"
   fi
 
   if ! sshd -t; then
@@ -204,9 +247,7 @@ rollback_from_restore_point() {
   fi
   systemctl restart ssh || systemctl restart sshd
 
-  if [[ -f "$restore_point/etc/fail2ban/jail.local" ]]; then
-    mkdir -p /etc/fail2ban
-    cp -a "$restore_point/etc/fail2ban/jail.local" /etc/fail2ban/jail.local
+  if restore_or_remove_snapshot_file "$restore_point" '/etc/fail2ban/jail.local'; then
     systemctl restart fail2ban || true
     restored_any="yes"
   elif restore_latest_backup 'jail.local.*.bak' '/etc/fail2ban/jail.local'; then
@@ -214,16 +255,13 @@ rollback_from_restore_point() {
     restored_any="yes"
   fi
 
-  if [[ -f "$restore_point/etc/default/ufw" ]]; then
-    cp -a "$restore_point/etc/default/ufw" /etc/default/ufw
+  if restore_or_remove_snapshot_file "$restore_point" '/etc/default/ufw'; then
     restored_any="yes"
   elif restore_latest_backup 'ufw.*.bak' '/etc/default/ufw'; then
     restored_any="yes"
   fi
 
-  if [[ -f "$restore_point/etc/sysctl.d/99-tunnel-secure.conf" ]]; then
-    mkdir -p /etc/sysctl.d
-    cp -a "$restore_point/etc/sysctl.d/99-tunnel-secure.conf" /etc/sysctl.d/99-tunnel-secure.conf
+  if restore_or_remove_snapshot_file "$restore_point" '/etc/sysctl.d/99-tunnel-secure.conf'; then
     sysctl --system >/dev/null || true
     restored_any="yes"
   elif restore_latest_backup '99-tunnel-secure.conf.*.bak' '/etc/sysctl.d/99-tunnel-secure.conf'; then

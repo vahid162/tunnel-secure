@@ -70,6 +70,9 @@ fi
 if ! grep -q '^run_rollback_flow() {' "$WIZARD"; then
   fail "run_rollback_flow function missing"
 fi
+if ! grep -q '^restore_or_remove_snapshot_file() {' "$WIZARD"; then
+  fail "restore_or_remove_snapshot_file function missing"
+fi
 pass "rollback flow functions present"
 
 printf '\nAll self-tests passed.\n'
