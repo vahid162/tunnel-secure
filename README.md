@@ -38,6 +38,23 @@
 sudo bash scripts/tunnel-security-wizard.sh
 ```
 
+## رفع خطای رایج
+
+اگر خطای زیر را دیدید:
+
+```bash
+bash: scripts/tunnel-security-wizard.sh: No such file or directory
+```
+
+یعنی در مسیر اشتباه هستید و از داخل پوشه‌ی ریپو دستور را اجرا نکرده‌اید. اول به مسیر پروژه بروید و بعد اجرا کنید:
+
+```bash
+cd /workspace/tunnel-secure
+sudo bash scripts/tunnel-security-wizard.sh
+```
+
+اگر پروژه را جای دیگری clone کرده‌اید، به‌جای `/workspace/tunnel-secure` مسیر واقعی همان پوشه را بگذارید.
+
 ## نکته مهم
 
 قبل از فعال‌سازی فایروال، حتماً یک دسترسی اضطراری (کنسول پنل/VNC/KVM) داشته باشید.
