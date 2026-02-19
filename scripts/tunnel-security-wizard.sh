@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_VERSION="1.4.5"
+SCRIPT_VERSION="1.4.6"
 BACKUP_DIR="/root/tunnel-secure-backups"
 
 red() { printf '\033[31m%s\033[0m\n' "$*"; }
@@ -410,16 +410,11 @@ main() {
     *) yellow "Invalid option; defaulting to detected mode ($detected_tunnel_mode)."; tunnel_mode="$detected_tunnel_mode" ;;
   esac
 
-  ssh_access_mode_default="1"
-  if [[ "$detected_ssh_access_mode" == "open" ]]; then
-    ssh_access_mode_default="2"
-    yellow "Admin IP could not be auto-detected from SSH session; defaulting SSH firewall mode to open + Fail2ban to reduce lockout risk."
-  fi
+  ssh_access_mode_default="2"
+  yellow "Default is set to open + Fail2ban (option 2) to reduce accidental SSH lockout risk for beginners."
 
   ssh_access_mode="restricted"
-  if [[ "$ssh_access_mode_default" == "1" ]]; then
-    yellow "WARNING: Restricted mode only allows SSH from Management IP list. If your current/backup admin IP is missing, you may lose SSH access (lockout). Keep console/KVM access ready."
-  fi
+  yellow "WARNING: If you select restricted mode (option 1), only the Management IP list can SSH. If current/backup admin IP is missing, you may lose SSH access (lockout). Keep console/KVM access ready."
   ssh_access_mode_choice="$(ask 'SSH firewall mode? (1=restrict to management IP, 2=open SSH port and rely on Fail2ban)' "$ssh_access_mode_default")"
   case "$ssh_access_mode_choice" in
     1) ssh_access_mode="restricted" ;;
