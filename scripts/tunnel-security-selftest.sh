@@ -81,6 +81,12 @@ fi
 if ! grep -q 'auto_detect_likely_tunnel_peer_ips' "$WIZARD"; then
   fail "auto-detect for likely tunnel peer ips missing"
 fi
+if ! grep -q 'has_repo_gre_signals' "$WIZARD"; then
+  fail "repo-based gre detection missing"
+fi
+if ! grep -q 'has_repo_ssh_tunnel_signals' "$WIZARD"; then
+  fail "repo-based ssh-tunnel detection missing"
+fi
 pass "tunnel auto-detection checks present"
 
 

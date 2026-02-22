@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_VERSION="1.4.21"
+SCRIPT_VERSION="1.4.22"
 BACKUP_DIR="/root/tunnel-secure-backups"
 
 red() { printf '\033[31m%s\033[0m\n' "$*"; }
@@ -467,11 +467,11 @@ auto_detect_tunnel_mode() {
   local has_gre="no"
   local has_ssh="no"
 
-  if has_gre_tunnel; then
+  if has_gre_tunnel || has_repo_gre_signals; then
     has_gre="yes"
   fi
 
-  if has_ssh_tunnel_signals; then
+  if has_ssh_tunnel_signals || has_repo_ssh_tunnel_signals; then
     has_ssh="yes"
   fi
 
@@ -484,6 +484,52 @@ auto_detect_tunnel_mode() {
   else
     echo "ssh"
   fi
+}
+
+has_repo_gre_signals() {
+  local -a repo_roots=(
+    "/root/gre-4"
+    "/opt/gre-4"
+    "/srv/gre-4"
+    "$HOME/gre-4"
+  )
+  local root
+
+  for root in "${repo_roots[@]}"; do
+    [[ -d "$root" ]] || continue
+    if [[ -f "$root/gre.sh" || -f "$root/gre-setup.sh" || -d "$root/systemd" ]]; then
+      return 0
+    fi
+  done
+
+  if systemctl list-unit-files --type=service 2>/dev/null | awk '{print $1}' | grep -Eiq '(gre-4|gre4|gre-tunnel)'; then
+    return 0
+  fi
+
+  return 1
+}
+
+has_repo_ssh_tunnel_signals() {
+  local -a repo_roots=(
+    "/root/ssh-tunnel"
+    "/opt/ssh-tunnel"
+    "/srv/ssh-tunnel"
+    "$HOME/ssh-tunnel"
+  )
+  local root
+
+  for root in "${repo_roots[@]}"; do
+    [[ -d "$root" ]] || continue
+    if [[ -f "$root/docker-compose.yml" || -f "$root/docker-compose.yaml" || -f "$root/run.sh" || -d "$root/systemd" ]]; then
+      return 0
+    fi
+  done
+
+  if systemctl list-unit-files --type=service 2>/dev/null | awk '{print $1}' | grep -Eiq '(ssh-tunnel|autossh|reverse-ssh|tunnel-ssh)'; then
+    return 0
+  fi
+
+  return 1
 }
 
 configure_sshd() {
