@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_VERSION="1.4.20"
+SCRIPT_VERSION="1.4.21"
 BACKUP_DIR="/root/tunnel-secure-backups"
 
 red() { printf '\033[31m%s\033[0m\n' "$*"; }
@@ -96,15 +96,23 @@ auto_detect_existing_ufw_tunnel_ports() {
 
 auto_detect_listening_service_ports() {
   local ssh_port="$1"
-  ss -lntH 2>/dev/null     | awk -v ssh_port=":"ssh_port '
+  ss -lntupH 2>/dev/null     | awk -v ssh_port=":"ssh_port '
       {
-        local_addr=$4
+        local_addr=$5
+        proc=$0
         n=split(local_addr, parts, ":")
         port=parts[n]
         if (port == "" || port !~ /^[0-9]+$/) next
         if (":" port == ssh_port) next
-        if (port == "53") next
         if (local_addr !~ /(^0\.0\.0\.0:|^\[::\]:)/) next
+
+        # avoid obvious non-tunnel common service ports
+        if (port == "53" || port == "80" || port == "443") next
+
+        # keep only likely tunnel-related processes (conservative)
+        pl=tolower(proc)
+        if (pl !~ /(ssh|sshd|stunnel|gost|xray|v2ray|hysteria|tuic|sing-box|brook|trojan|naive)/) next
+
         print port "/tcp"
       }
     ' | awk '!seen[$0]++' | paste -sd, - || true
@@ -592,6 +600,23 @@ configure_ufw() {
     ufw allow "$p" comment 'tunnel service'
   done
 
+  if [[ -n "$extra_ports_csv" ]]; then
+    IFS=',' read -r -a extra_ports_validate <<< "$extra_ports_csv"
+    for ep in "${extra_ports_validate[@]}"; do
+      ep="$(echo "$ep" | xargs)"
+      [[ -z "$ep" ]] && continue
+      if [[ ! "$ep" =~ ^[0-9]{1,5}/(tcp|udp)$ ]]; then
+        red "Invalid tunnel service port format: $ep (expected like 22335/tcp)"
+        exit 1
+      fi
+      ep_port="${ep%%/*}"
+      if ! validate_port "$ep_port"; then
+        red "Invalid tunnel service port number: $ep_port"
+        exit 1
+      fi
+    done
+  fi
+
   if [[ "$tunnel_mode" == "gre" || "$tunnel_mode" == "both" ]]; then
     ufw allow proto gre from "$gre_peer_ip" to any comment 'gre peer'
   fi
@@ -699,6 +724,7 @@ main() {
   echo "  Tunnel service port(s) from existing UFW (auto): ${detected_tunnel_ports_csv:-not-detected}"
   echo "  Listening public service port(s) (auto): ${detected_listening_ports_csv:-not-detected}"
   echo "  Likely tunnel peer IP(s) from established sessions (auto): ${detected_likely_tunnel_peer_ips:-not-detected}"
+  yellow "Note: auto-detected tunnel ports are conservative; review and keep only real tunnel service ports."
 
   mgmt_ip_csv="$(ask 'Management IP/CIDR list for SSH allow (comma-separated, example: 1.2.3.4/32,5.6.7.8)' "$detected_mgmt_ip")"
   if ! validate_ipv4_or_cidr_list "$mgmt_ip_csv"; then
@@ -759,6 +785,10 @@ main() {
       ;;
   esac
 
+  if [[ "$ssh_access_mode" == "open" ]]; then
+    yellow "SSH firewall mode is OPEN: Management IP list is kept for fail-safe records, but SSH access will be open to all IPs and protected by Fail2ban."
+  fi
+
   trusted_tunnel_peer_ips_csv=""
   if [[ "$tunnel_mode" == "ssh" || "$tunnel_mode" == "both" ]]; then
     trusted_tunnel_peer_default="${detected_ssh_tunnel_peer_ip:-}"
@@ -781,7 +811,27 @@ main() {
   extra_ports_csv=""
   if [[ "$tunnel_mode" == "ssh" || "$tunnel_mode" == "both" ]]; then
     extra_ports_default="$(normalize_csv_unique "$detected_tunnel_ports_csv,$detected_listening_ports_csv")"
-    extra_ports_csv="$(ask 'SSH tunnel service port(s), comma-separated (example: 443/tcp,80/tcp)' "$extra_ports_default")"
+    if [[ -z "$extra_ports_default" ]]; then
+      yellow "No tunnel service port auto-detected. If your ssh-tunnel server listens on a public port, enter it now (example: 22335/tcp)."
+    fi
+    extra_ports_csv="$(ask 'SSH tunnel service port(s), comma-separated (example: 22335/tcp,443/tcp)' "$extra_ports_default")"
+  fi
+
+  if [[ -n "$extra_ports_csv" ]]; then
+    IFS=',' read -r -a extra_ports_validate <<< "$extra_ports_csv"
+    for ep in "${extra_ports_validate[@]}"; do
+      ep="$(echo "$ep" | xargs)"
+      [[ -z "$ep" ]] && continue
+      if [[ ! "$ep" =~ ^[0-9]{1,5}/(tcp|udp)$ ]]; then
+        red "Invalid tunnel service port format: $ep (expected like 22335/tcp)"
+        exit 1
+      fi
+      ep_port="${ep%%/*}"
+      if ! validate_port "$ep_port"; then
+        red "Invalid tunnel service port number: $ep_port"
+        exit 1
+      fi
+    done
   fi
 
   if [[ "$tunnel_mode" == "gre" || "$tunnel_mode" == "both" ]]; then
@@ -839,6 +889,23 @@ main() {
 
   if ask_yes_no "Install and enable Fail2ban now?" "y"; then
     configure_fail2ban "$ssh_port" "$fail2ban_ignoreip_csv"
+  fi
+
+  if [[ -n "$extra_ports_csv" ]]; then
+    IFS=',' read -r -a extra_ports_validate <<< "$extra_ports_csv"
+    for ep in "${extra_ports_validate[@]}"; do
+      ep="$(echo "$ep" | xargs)"
+      [[ -z "$ep" ]] && continue
+      if [[ ! "$ep" =~ ^[0-9]{1,5}/(tcp|udp)$ ]]; then
+        red "Invalid tunnel service port format: $ep (expected like 22335/tcp)"
+        exit 1
+      fi
+      ep_port="${ep%%/*}"
+      if ! validate_port "$ep_port"; then
+        red "Invalid tunnel service port number: $ep_port"
+        exit 1
+      fi
+    done
   fi
 
   if [[ "$tunnel_mode" == "gre" || "$tunnel_mode" == "both" ]]; then

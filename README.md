@@ -62,8 +62,10 @@ sudo bash scripts/tunnel-security-emergency-ssh-recover.sh --port 2222
 ```
 
 ## توصیه امن برای کاربران با IP متغیر
+- در حالت `SSH firewall mode = 2 (open + Fail2ban)`، لیست Management IP فقط برای مرجع/ایمنی نگه‌داری می‌شود و محدودکننده SSH نیست.
 - در Wizard معمولاً `SSH firewall mode = 2 (open + Fail2ban)` انتخاب امن‌تری برای جلوگیری از lockout است.
 - پورت‌های واقعی تونل را در `SSH tunnel service port(s)` تأیید کنید.
+- تشخیص خودکار پورت‌ها به‌صورت محافظه‌کارانه انجام می‌شود؛ قبل از تایید نهایی فقط پورت‌های واقعی تونل را نگه دارید.
 - IPهای peer تونل را در `Trusted SSH tunnel peer IP(s)` تأیید کنید.
 - قبل از بستن سشن فعلی، یک سشن SSH جدید باز و تست کنید.
 
