@@ -72,6 +72,17 @@ if ! grep -q 'auto_detect_existing_ufw_admin_ips' "$WIZARD"; then
   fail "rerun safety auto-detect for ufw admin ips missing"
 fi
 pass "rerun safety checks present"
+if ! grep -q 'auto_detect_existing_ufw_tunnel_ports' "$WIZARD"; then
+  fail "auto-detect for ufw tunnel ports missing"
+fi
+if ! grep -q 'auto_detect_listening_service_ports' "$WIZARD"; then
+  fail "auto-detect for listening service ports missing"
+fi
+if ! grep -q 'auto_detect_likely_tunnel_peer_ips' "$WIZARD"; then
+  fail "auto-detect for likely tunnel peer ips missing"
+fi
+pass "tunnel auto-detection checks present"
+
 
 if ! grep -q 'Select mode (1=apply/update security, 2=rollback to previous restore point)' "$WIZARD"; then
   fail "operation mode prompt missing"
