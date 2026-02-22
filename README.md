@@ -17,6 +17,7 @@
 ## قابلیت‌ها
 
 - تنظیم امن SSH با Drop-in استاندارد (`/etc/ssh/sshd_config.d/00-tunnel-secure.conf`) و اعتبارسنجی قبل از ری‌استارت
+- هنگام اعمال SSH hardening، مقدار `PermitRootLogin` فعلی سرور به‌صورت خودکار تشخیص داده می‌شود و قبل از اعمال قابل تایید/تغییر است تا ریسک lockout ناخواسته کمتر شود
 - در صورت خطای کانفیگ SSH، rollback خودکار فایل Drop-in
 - فعال‌سازی `fail2ban` برای جلوگیری از Brute-force
 - تنظیم `sysctl` سازگار با GRE (برای جلوگیری از اختلال rp_filter)
