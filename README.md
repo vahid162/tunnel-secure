@@ -114,10 +114,23 @@ sudo bash scripts/tunnel-security-emergency-ssh-recover.sh --port 2222
 ```
 
 این اسکریپت در حالت اضطراری:
-- یک کانفیگ حداقلی و قابل ورود برای SSH می‌نویسد.
+- یک کانفیگ حداقلی و قابل ورود برای SSH می‌نویسد (به‌همراه `ListenAddress 0.0.0.0`).
+- بقیه drop-inهای `sshd_config.d` را موقتاً غیرفعال می‌کند تا تنظیمات متناقض جلوی ورود را نگیرند.
 - `sshd -t` را قبل از ری‌استارت بررسی می‌کند.
-- پورت SSH را در UFW به‌صورت global باز می‌کند تا دوباره وصل شوید.
+- پورت SSH را در UFW و `iptables` باز می‌کند تا دوباره وصل شوید.
+- Fail2ban را موقتاً متوقف می‌کند تا ban قبلی باعث قفل شدن دوباره نشود.
 - از تنظیمات قبلی backup می‌گیرد (`/root/tunnel-secure-backups`).
+
+اگر باز هم SSH از بیرون وصل نشد، در کنسول این چک‌ها را اجرا کنید:
+
+```bash
+sudo ss -lntp | grep -E ':22\b|:2222\b'
+sudo systemctl status ssh --no-pager || sudo systemctl status sshd --no-pager
+sudo ufw status verbose
+sudo iptables -S INPUT | sed -n '1,80p'
+```
+
+اگر سرویس SSH بالا بود و روی پورت listen می‌کرد اما از بیرون هنوز وصل نشد، مشکل معمولاً از **Firewall پنل/Cloud Provider** است و باید همان پورت SSH را آنجا هم allow کنید.
 
 بعد از اینکه SSH برگشت، سریعاً Wizard اصلی را دوباره اجرا کنید و تنظیم امن‌تر را اعمال کنید.
 
