@@ -38,6 +38,33 @@ validate_permit_root_login_mode "prohibit-password" || fail "permit root login m
 ! validate_permit_root_login_mode "invalid" >/dev/null 2>&1 || fail "permit root login mode validation accepted invalid value"
 pass "permit root login mode validation"
 
+
+# Validate auto-detect tunnel mode decision matrix with controlled function overrides
+has_gre_tunnel() { return 1; }
+has_ssh_tunnel_signals() { return 1; }
+has_repo_gre_signals() { return 1; }
+has_repo_ssh_tunnel_signals() { return 1; }
+[[ "$(auto_detect_tunnel_mode)" == "ssh" ]] || fail "auto_detect_tunnel_mode default fallback should be ssh"
+
+has_gre_tunnel() { return 0; }
+has_ssh_tunnel_signals() { return 1; }
+has_repo_gre_signals() { return 1; }
+has_repo_ssh_tunnel_signals() { return 1; }
+[[ "$(auto_detect_tunnel_mode)" == "gre" ]] || fail "auto_detect_tunnel_mode should detect gre when only gre is present"
+
+has_gre_tunnel() { return 1; }
+has_ssh_tunnel_signals() { return 0; }
+has_repo_gre_signals() { return 1; }
+has_repo_ssh_tunnel_signals() { return 1; }
+[[ "$(auto_detect_tunnel_mode)" == "ssh" ]] || fail "auto_detect_tunnel_mode should detect ssh when only ssh is present"
+
+has_gre_tunnel() { return 0; }
+has_ssh_tunnel_signals() { return 0; }
+has_repo_gre_signals() { return 1; }
+has_repo_ssh_tunnel_signals() { return 1; }
+[[ "$(auto_detect_tunnel_mode)" == "both" ]] || fail "auto_detect_tunnel_mode should detect both when both are present"
+pass "auto_detect_tunnel_mode decision matrix"
+
 if ! grep -q 'Tunnel mode? (1=ssh-tunnel , 2=gre-4 , 3=both)' "$WIZARD"; then
   fail "tunnel mode prompt missing"
 fi
@@ -80,6 +107,12 @@ if ! grep -q 'auto_detect_listening_service_ports' "$WIZARD"; then
 fi
 if ! grep -q 'auto_detect_likely_tunnel_peer_ips' "$WIZARD"; then
   fail "auto-detect for likely tunnel peer ips missing"
+fi
+if ! grep -q 'has_repo_gre_signals' "$WIZARD"; then
+  fail "repo-based gre detection missing"
+fi
+if ! grep -q 'has_repo_ssh_tunnel_signals' "$WIZARD"; then
+  fail "repo-based ssh-tunnel detection missing"
 fi
 pass "tunnel auto-detection checks present"
 
