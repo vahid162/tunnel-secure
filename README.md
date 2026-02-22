@@ -10,6 +10,7 @@
 ## اسکریپت
 
 - مسیر: `scripts/tunnel-security-wizard.sh`
+- اسکریپت ریکاوری اضطراری SSH (برای وقتی lockout شده‌اید): `scripts/tunnel-security-emergency-ssh-recover.sh`
 - نوع اجرا: تعاملی (سوال‌محور)
 - مناسب برای: Ubuntu/Debian (به‌خاطر `apt` و `ufw`)
 - رفتار هوشمند: قبل از سؤال‌ها، اسکریپت خودش مقادیر اولیه را از سرور تشخیص می‌دهد و بعد شما فقط تایید/اصلاح می‌کنید.
@@ -17,6 +18,7 @@
 ## قابلیت‌ها
 
 - تنظیم امن SSH با Drop-in استاندارد (`/etc/ssh/sshd_config.d/00-tunnel-secure.conf`) و اعتبارسنجی قبل از ری‌استارت
+- هنگام اعمال SSH hardening، مقدار `PermitRootLogin` فعلی سرور به‌صورت خودکار تشخیص داده می‌شود و قبل از اعمال قابل تایید/تغییر است تا ریسک lockout ناخواسته کمتر شود
 - در صورت خطای کانفیگ SSH، rollback خودکار فایل Drop-in
 - فعال‌سازی `fail2ban` برای جلوگیری از Brute-force
 - تنظیم `sysctl` سازگار با GRE (برای جلوگیری از اختلال rp_filter)
@@ -26,7 +28,8 @@
   - حالت باز (پورت SSH باز + اتکا به Fail2ban)
   - پیش‌فرض این گزینه روی حالت باز + Fail2ban (گزینه ۲) برای کاهش ریسک lockout کاربران مبتدی
   - پشتیبانی از چند IP مدیریتی (ورودی comma-separated) برای جلوگیری از قفل شدن SSH در تغییر IP/مسیر دسترسی
-  - تشخیص خودکار IP سمت مقابل SSH tunnel و افزودن آن به allowlist/Fail2ban ignore (با امکان تایید/ویرایش)
+  - تشخیص خودکار IP سمت مقابل SSH tunnel (به‌همراه چند IP محتمل از اتصال‌های established) و افزودن آن‌ها به allowlist/Fail2ban ignore با امکان تایید/ویرایش
+- تشخیص خودکار پورت‌های سرویس تونل از UFW فعلی و پورت‌های listen عمومی برای پیشنهاد خودکار در `SSH tunnel service port(s)`
 - در اجرای مجدد Wizard، IP سشن فعلی ادمین و IPهای SSH محدودشدهٔ موجود UFW به‌صورت خودکار به allowlist اضافه می‌شوند تا ریسک lockout کمتر شود
 - در شروع هر اجرای اعمال تغییرات، یک Restore Point کامل از SSH/Fail2ban/UFW/Sysctl ساخته می‌شود
 - اجرای دوباره Wizard حالا یک حالت Rollback دارد تا با انتخاب Restore Point، تنظیمات به وضعیت قبلی برگردد
@@ -90,6 +93,47 @@ sudo bash <(curl -fsSL https://raw.githubusercontent.com/vahid162/tunnel-secure/
 ```
 
 این اسکریپت فقط گزارش می‌دهد: وضعیت SSH، UFW، Fail2ban، پورت‌های listen، اینترفیس‌های GRE/TUN/TAP و بکاپ‌ها.
+
+## ریکاوری اضطراری وقتی SSH قطع شده (بدون نیاز به SSH فعلی)
+
+اگر الان دیگر SSH ندارید، باید از **کنسول پنل/VNC/KVM** سرور وارد شوید (نه SSH).
+
+سپس در همان کنسول این دستورات را بزنید:
+
+```bash
+cd /root
+rm -rf tunnel-secure
+git clone https://github.com/vahid162/tunnel-secure.git
+cd tunnel-secure
+sudo bash scripts/tunnel-security-emergency-ssh-recover.sh --port 22
+```
+
+اگر SSH شما روی پورت دیگری است (مثلاً 2222):
+
+```bash
+sudo bash scripts/tunnel-security-emergency-ssh-recover.sh --port 2222
+```
+
+این اسکریپت در حالت اضطراری:
+- یک کانفیگ حداقلی و قابل ورود برای SSH می‌نویسد (به‌همراه `ListenAddress 0.0.0.0`).
+- بقیه drop-inهای `sshd_config.d` را موقتاً غیرفعال می‌کند تا تنظیمات متناقض جلوی ورود را نگیرند.
+- `sshd -t` را قبل از ری‌استارت بررسی می‌کند.
+- پورت SSH را در UFW و `iptables` باز می‌کند تا دوباره وصل شوید.
+- Fail2ban را موقتاً متوقف می‌کند تا ban قبلی باعث قفل شدن دوباره نشود.
+- از تنظیمات قبلی backup می‌گیرد (`/root/tunnel-secure-backups`).
+
+اگر باز هم SSH از بیرون وصل نشد، در کنسول این چک‌ها را اجرا کنید:
+
+```bash
+sudo ss -lntp | grep -E ':22\b|:2222\b'
+sudo systemctl status ssh --no-pager || sudo systemctl status sshd --no-pager
+sudo ufw status verbose
+sudo iptables -S INPUT | sed -n '1,80p'
+```
+
+اگر سرویس SSH بالا بود و روی پورت listen می‌کرد اما از بیرون هنوز وصل نشد، مشکل معمولاً از **Firewall پنل/Cloud Provider** است و باید همان پورت SSH را آنجا هم allow کنید.
+
+بعد از اینکه SSH برگشت، سریعاً Wizard اصلی را دوباره اجرا کنید و تنظیم امن‌تر را اعمال کنید.
 
 ## رفع خطای رایج
 
