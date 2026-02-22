@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WIZARD="$ROOT_DIR/scripts/tunnel-security-wizard.sh"
 AUDIT="$ROOT_DIR/scripts/tunnel-security-audit.sh"
+EMERGENCY="$ROOT_DIR/scripts/tunnel-security-emergency-ssh-recover.sh"
 
 pass() { printf '[PASS] %s\n' "$*"; }
 fail() { printf '[FAIL] %s\n' "$*"; exit 1; }
@@ -13,6 +14,9 @@ pass "wizard syntax"
 
 bash -n "$AUDIT" || fail "audit syntax check failed"
 pass "audit syntax"
+
+bash -n "$EMERGENCY" || fail "emergency recover syntax check failed"
+pass "emergency recover syntax"
 
 # shellcheck disable=SC1090
 source "$WIZARD"
