@@ -29,6 +29,11 @@ pass "ipv4 list validation"
 [[ "$(normalize_csv_unique '1.1.1.1, 1.1.1.1,2.2.2.2')" == "1.1.1.1,2.2.2.2" ]] || fail "normalize_csv_unique did not deduplicate"
 pass "csv normalization"
 
+validate_permit_root_login_mode "yes" || fail "permit root login mode validation failed for yes"
+validate_permit_root_login_mode "prohibit-password" || fail "permit root login mode validation failed for prohibit-password"
+! validate_permit_root_login_mode "invalid" >/dev/null 2>&1 || fail "permit root login mode validation accepted invalid value"
+pass "permit root login mode validation"
+
 if ! grep -q 'Tunnel mode? (1=ssh-tunnel , 2=gre-4 , 3=both)' "$WIZARD"; then
   fail "tunnel mode prompt missing"
 fi
@@ -38,6 +43,11 @@ if ! grep -q 'SSH firewall mode? (1=restrict to management IP, 2=open SSH port a
   fail "ssh firewall prompt missing"
 fi
 pass "ssh firewall prompt present"
+
+if ! grep -q 'SSH PermitRootLogin mode? (yes | prohibit-password | no | forced-commands-only)' "$WIZARD"; then
+  fail "ssh PermitRootLogin prompt missing"
+fi
+pass "ssh PermitRootLogin prompt present"
 
 if ! grep -q 'if \[\[ "\$tunnel_mode" == "gre" || "\$tunnel_mode" == "both" \]\]; then' "$WIZARD"; then
   fail "gre/both branch missing"
