@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_VERSION="1.4.24"
+SCRIPT_VERSION="1.4.25"
 BACKUP_DIR="/root/tunnel-secure-backups"
 
 red() { printf '\033[31m%s\033[0m\n' "$*"; }
@@ -55,6 +55,46 @@ validate_ipv4_or_cidr_list() {
     item="$(echo "$item" | xargs)"
     [[ -n "$item" ]] || return 1
     validate_ipv4_or_cidr "$item" || return 1
+  done
+}
+
+validate_ipv4_list() {
+  local input_csv="$1"
+  local -a ip_list
+  local item
+
+  IFS=',' read -r -a ip_list <<< "$input_csv"
+  [[ ${#ip_list[@]} -gt 0 ]] || return 1
+
+  for item in "${ip_list[@]}"; do
+    item="$(echo "$item" | xargs)"
+    [[ -n "$item" ]] || return 1
+    is_valid_ipv4 "$item" || return 1
+  done
+}
+
+validate_port_list_csv() {
+  local ports_csv="$1"
+  local -a ports
+  local item port
+
+  [[ -z "$ports_csv" ]] && return 0
+
+  IFS=',' read -r -a ports <<< "$ports_csv"
+  for item in "${ports[@]}"; do
+    item="$(echo "$item" | xargs)"
+    [[ -z "$item" ]] && continue
+
+    if [[ ! "$item" =~ ^[0-9]{1,5}/(tcp|udp)$ ]]; then
+      red "Invalid tunnel service port format: $item (expected like 22335/tcp)"
+      return 1
+    fi
+
+    port="${item%%/*}"
+    if ! validate_port "$port"; then
+      red "Invalid tunnel service port number: $port"
+      return 1
+    fi
   done
 }
 
@@ -618,6 +658,11 @@ configure_ufw() {
   local ssh_access_mode="$9"
 
   blue "\n[Firewall/UFW] Applying firewall rules while preserving tunnel access..."
+
+  if ! validate_port_list_csv "$extra_ports_csv"; then
+    exit 1
+  fi
+
   ensure_package ufw
   backup_file /etc/default/ufw
   mkdir -p "$BACKUP_DIR"
@@ -645,23 +690,6 @@ configure_ufw() {
     [[ -z "$p" ]] && continue
     ufw allow "$p" comment 'tunnel service'
   done
-
-  if [[ -n "$extra_ports_csv" ]]; then
-    IFS=',' read -r -a extra_ports_validate <<< "$extra_ports_csv"
-    for ep in "${extra_ports_validate[@]}"; do
-      ep="$(echo "$ep" | xargs)"
-      [[ -z "$ep" ]] && continue
-      if [[ ! "$ep" =~ ^[0-9]{1,5}/(tcp|udp)$ ]]; then
-        red "Invalid tunnel service port format: $ep (expected like 22335/tcp)"
-        exit 1
-      fi
-      ep_port="${ep%%/*}"
-      if ! validate_port "$ep_port"; then
-        red "Invalid tunnel service port number: $ep_port"
-        exit 1
-      fi
-    done
-  fi
 
   if [[ "$tunnel_mode" == "gre" || "$tunnel_mode" == "both" ]]; then
     ufw allow proto gre from "$gre_peer_ip" to any comment 'gre peer'
@@ -754,7 +782,7 @@ main() {
 
   [[ -z "$detected_mgmt_ip" ]] && detected_mgmt_ip="1.2.3.4"
   [[ -z "$detected_ssh_port" ]] && detected_ssh_port="22"
-  [[ -z "$detected_permit_root_login" ]] && detected_permit_root_login="yes"
+  [[ -z "$detected_permit_root_login" ]] && detected_permit_root_login="prohibit-password"
   [[ -z "$detected_gre_iface" ]] && detected_gre_iface="gre1"
 
   yellow "Auto-detected defaults:"
@@ -863,27 +891,14 @@ main() {
     extra_ports_csv="$(ask 'SSH tunnel service port(s), comma-separated (example: 22335/tcp,443/tcp)' "$extra_ports_default")"
   fi
 
-  if [[ -n "$extra_ports_csv" ]]; then
-    IFS=',' read -r -a extra_ports_validate <<< "$extra_ports_csv"
-    for ep in "${extra_ports_validate[@]}"; do
-      ep="$(echo "$ep" | xargs)"
-      [[ -z "$ep" ]] && continue
-      if [[ ! "$ep" =~ ^[0-9]{1,5}/(tcp|udp)$ ]]; then
-        red "Invalid tunnel service port format: $ep (expected like 22335/tcp)"
-        exit 1
-      fi
-      ep_port="${ep%%/*}"
-      if ! validate_port "$ep_port"; then
-        red "Invalid tunnel service port number: $ep_port"
-        exit 1
-      fi
-    done
+  if ! validate_port_list_csv "$extra_ports_csv"; then
+    exit 1
   fi
 
   if [[ "$tunnel_mode" == "gre" || "$tunnel_mode" == "both" ]]; then
     gre_peer_ip="$(ask 'GRE peer IP (remote tunnel endpoint)' "${detected_gre_peer:-}")"
-    if ! validate_ipv4_or_cidr "$gre_peer_ip"; then
-      red "Invalid GRE peer IP format."
+    if ! validate_ipv4_list "$gre_peer_ip"; then
+      red "Invalid GRE peer IP format. Only single IPv4 is allowed (example: 1.2.3.4)."
       exit 1
     fi
 

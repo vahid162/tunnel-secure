@@ -30,6 +30,15 @@ validate_ipv4_or_cidr_list "1.1.1.1,2.2.2.2/32" || fail "validate_ipv4_or_cidr_l
 ! validate_ipv4_or_cidr_list "1.1.1.1,bad-ip" >/dev/null 2>&1 || fail "validate_ipv4_or_cidr_list accepted invalid input"
 pass "ipv4 list validation"
 
+
+validate_ipv4_list "1.2.3.4,5.6.7.8" || fail "validate_ipv4_list failed for IPv4 list"
+! validate_ipv4_list "1.2.3.4/32" >/dev/null 2>&1 || fail "validate_ipv4_list accepted CIDR"
+pass "ipv4-only list validation"
+
+validate_port_list_csv "22335/tcp,443/tcp" || fail "validate_port_list_csv failed for valid list"
+! validate_port_list_csv "bad-format" >/dev/null 2>&1 || fail "validate_port_list_csv accepted invalid format"
+pass "port list csv validation"
+
 [[ "$(normalize_csv_unique '1.1.1.1, 1.1.1.1,2.2.2.2')" == "1.1.1.1,2.2.2.2" ]] || fail "normalize_csv_unique did not deduplicate"
 pass "csv normalization"
 
@@ -79,6 +88,11 @@ if ! grep -q 'SSH PermitRootLogin mode? (yes | prohibit-password | no | forced-c
   fail "ssh PermitRootLogin prompt missing"
 fi
 pass "ssh PermitRootLogin prompt present"
+
+if ! grep -q '\[\[ -z "\$detected_permit_root_login" \]\] && detected_permit_root_login="prohibit-password"' "$WIZARD"; then
+  fail "secure default for PermitRootLogin fallback missing"
+fi
+pass "secure default PermitRootLogin fallback present"
 
 if ! grep -q 'if \[\[ "\$tunnel_mode" == "gre" || "\$tunnel_mode" == "both" \]\]; then' "$WIZARD"; then
   fail "gre/both branch missing"
